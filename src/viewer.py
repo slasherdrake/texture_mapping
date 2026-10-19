@@ -2,6 +2,7 @@
 Interactive viewer for meshes and parameterizations using polyscope.
 
 Run with: python -m src.viewer
+Or: python src/viewer.py
 """
 
 import os
@@ -9,6 +10,10 @@ import sys
 import numpy as np
 import polyscope as ps
 import polyscope.imgui as psim
+
+# Add parent directory to path to enable imports when run directly
+if __name__ == "__main__":
+    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from src.shapes import uv_sphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
