@@ -1,0 +1,98 @@
+\documentclass[11pt]{article}
+\usepackage[margin=0.9in,landscape]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{booktabs}
+\usepackage{longtable}
+\usepackage{array}
+\usepackage[table]{xcolor}
+
+\definecolor{course}{HTML}{E7E0F3}
+\definecolor{core}{HTML}{D6E9F0}
+\definecolor{stretch}{HTML}{F6E7CC}
+\definecolor{final}{HTML}{D9EEE1}
+
+\newcommand{\trcourse}{\rowcolor{course}}
+\newcommand{\trcore}{\rowcolor{core}}
+\newcommand{\trstretch}{\rowcolor{stretch}}
+\newcommand{\trfinal}{\rowcolor{final}}
+
+\title{Surface Mapping Project: Task Schedule\\[2pt]
+\large ECE 467/567 Computer Graphics and CAD, Fall 2026}
+\date{Revised October 27, 2026, after proposal feedback}
+\author{}
+
+\begin{document}
+\maketitle
+\vspace{-2em}
+
+\section*{Course Deadlines}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Date} & \textbf{Deliverable} \\
+\midrule
+Sun Oct 18 & Proposal submitted (9/10, approved with trimmed core) \\
+Wed Oct 28 & Paper choice (individual; Tanner and Drake choose different papers) \\
+Thu Nov 5  & Paper presentations \\
+Tue Nov 17 & Milestone check \\
+Tue Dec 8  & Demo day; final report and code due 11:59 PM \\
+\bottomrule
+\end{tabular}
+
+\section*{Task Table}
+Rows are shaded by track:
+\colorbox{course}{Course \& paper},
+\colorbox{core}{Core build},
+\colorbox{stretch}{Stretch},
+\colorbox{final}{Wrap-up}.
+Stretch tasks can be cut without affecting the core. Overlapping dates on dependent tasks mean the later task can start once the earlier one is underway.
+
+\medskip
+\renewcommand{\arraystretch}{1.15}
+\begin{longtable}{@{}l >{\raggedright\arraybackslash}p{7.5cm} l l l c >{\raggedright\arraybackslash}p{3cm} p{2.5cm}@{}}
+\toprule
+\textbf{ID} & \textbf{Task} & \textbf{Track} & \textbf{Start} & \textbf{End} & \textbf{Days} & \textbf{Depends on} & \textbf{Owner} \\
+\midrule
+\endfirsthead
+\toprule
+\textbf{ID} & \textbf{Task} & \textbf{Track} & \textbf{Start} & \textbf{End} & \textbf{Days} & \textbf{Depends on} & \textbf{Owner} \\
+\midrule
+\endhead
+\bottomrule
+\endfoot
+\trcourse P1 & Submit proposal (graded 9/10, approved) & Course & Oct 18 & Oct 18 & 1 & -- & Both \\
+\trcourse R1 & Skim course notes and candidate papers & Course & Oct 19 & Oct 27 & 9 & -- & Both \\
+\trcourse P2 & Submit paper choices (different papers: LSCM and Sander et al.) & Course & Oct 27 & Oct 28 & 2 & R1 & Each \\
+\trcourse P3 & Tanner: paper talk and related-works comparison & Course & Oct 29 & Nov 4 & 7 & P2 & Tanner \\
+\trcourse P4 & Drake: paper talk and related-works comparison & Course & Oct 29 & Nov 4 & 7 & P2 & Drake \\
+\trcore S1 & Repository and Python environment setup & Core & Oct 19 & Oct 21 & 3 & -- &  \\
+\trcore S2 & Mesh loading; sphere, hemisphere, torus and disk test meshes & Core & Oct 21 & Oct 30 & 10 & S1 &  \\
+\trcore M1 & Analytic sphere projections (equirectangular, Mercator, stereographic) & Core & Oct 26 & Nov 2 & 8 & S2 &  \\
+\trcore D1 & Distortion metrics (per-triangle Jacobian, SVD, fold-overs) & Core & Oct 28 & Nov 4 & 8 & S2 &  \\
+\trcore V1 & Polyscope viewer: 3D and UV views, method switching & Core & Oct 30 & Nov 8 & 10 & S2 &  \\
+\trcore M2 & Tutte embedding (uniform and mean-value weights) on disks & Core & Nov 2 & Nov 10 & 9 & S2 &  \\
+\trcore D2 & Theory tests: Mercator $\sigma_1/\sigma_2$ near 1, Tutte zero fold-overs & Core & Nov 4 & Nov 11 & 8 & M1, D1, M2 &  \\
+\trcore V2 & Distortion heatmaps and checkerboard texture & Core & Nov 5 & Nov 12 & 8 & V1, D1 &  \\
+\trcore M3 & LSCM with two pinned boundary vertices & Core & Nov 9 & Nov 21 & 13 & M2 &  \\
+\trcourse K1 & Milestone submission & Course & Nov 16 & Nov 17 & 2 & V2, M2, D2 & Both \\
+\trcore C1 & Cut step: Dijkstra seam for closed genus-0 meshes; two cuts for torus & Core & Nov 11 & Nov 19 & 9 & M2 &  \\
+\trcore L1 & libigl validation checks (not a report result) & Core & Nov 17 & Nov 24 & 8 & M2, M3 &  \\
+\trcore E1 & Evaluation 1: distortion by method and mesh & Core & Nov 21 & Nov 29 & 9 & M3, C1, D2 &  \\
+\trcore E2 & Evaluation 2: solve time vs. mesh size & Core & Nov 22 & Nov 28 & 7 & M3 &  \\
+\trstretch H1 & Borrow projector and test hardware & Stretch & Oct 28 & Nov 17 & 21 & -- &  \\
+\trstretch X1 & Cotangent weights, fold-overs reported separately & Stretch & Nov 12 & Nov 18 & 7 & M2, D1 &  \\
+\trstretch T1 & Procedural 3D shaders (moved from core) & Stretch & Nov 18 & Nov 25 & 8 & V1 &  \\
+\trstretch S3 & Phone-scan objects and mesh cleanup (moved from core) & Stretch & Nov 18 & Nov 25 & 8 & S2 &  \\
+\trstretch A1 & A1: project onto a known shape & Stretch & Nov 18 & Nov 26 & 9 & H1, V1 &  \\
+\trstretch B1 & ARAP parameterization & Stretch & Nov 22 & Dec 1 & 10 & M3 &  \\
+\trstretch A2 & A2: project onto a scanned object & Stretch & Nov 25 & Dec 2 & 8 & A1, S3, C1, M3 &  \\
+\trstretch A3 & A3: structured-light scanning & Stretch & Nov 30 & Dec 5 & 6 & A2 &  \\
+\trstretch B2 & Multi-chart atlas with chart segmentation & Stretch & Nov 28 & Dec 5 & 8 & C1, M3 &  \\
+\trfinal F3 & Write final report & Wrap-up & Nov 28 & Dec 7 & 10 & E1, E2 &  \\
+\trfinal F1 & Polish viewer and demo script & Wrap-up & Nov 30 & Dec 5 & 6 & E1 &  \\
+\trfinal F2 & Record backup demo video & Wrap-up & Dec 4 & Dec 6 & 3 & F1 &  \\
+\trfinal F4 & Demo day; submit report and code & Wrap-up & Dec 8 & Dec 8 & 1 & F2, F3 & Both \\
+\end{longtable}
+
+\noindent\textit{Changes from the Oct 18 plan:} the core now uses one stack (Python and Polyscope). Procedural shaders (T1) and scanned-mesh cleanup (S3) moved to stretch; a cut step (C1) was added; evaluation was reduced to two studies (E1, E2); libigl is used for validation only (L1). Thanksgiving (Nov 26) falls within the evaluation and stretch-goal window.
+
+\end{document}

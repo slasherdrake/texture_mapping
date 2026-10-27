@@ -1,0 +1,159 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb}
+\usepackage{array}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage[hidelinks]{hyperref}
+\setlist{itemsep=2pt,topsep=4pt}
+
+\title{Texture Mapping and Distortion Analysis\\[4pt]
+\large Project Outline, ECE 467/567 Computer Graphics and CAD, Fall 2026}
+\author{Tanner Muscarella \and Drake Kendall}
+\date{Revised October 27, 2026, after proposal feedback}
+
+\begin{document}
+\maketitle
+
+\section{Status}
+The proposal was approved with a score of 9/10, on the condition that the core is trimmed to a single
+stack (Python and Polyscope). This outline reflects that change and the instructor's suggestions:
+a cut step for closed meshes, pinned vertices for LSCM, theory-based tests, and two focused evaluations.
+
+\section{Goal}
+Build a Python tool that maps 2D images onto curved 3D surfaces using parameterization methods we implement
+ourselves, and that measures and visualizes the distortion each method unavoidably introduces. By Gauss's
+\emph{Theorema Egregium}, no surface with nonzero Gaussian curvature can be flattened without distortion, so every
+method trades off angle preservation against area preservation. The tool makes that trade-off visible and
+measurable. As a stretch goal, the mapped images are projected onto real objects with a calibrated projector.
+
+\section{Core (Python and Polyscope only)}
+\begin{enumerate}
+  \item \textbf{Test meshes:} sphere, hemisphere, torus and disk-like patches, generated analytically or loaded
+        from \texttt{.obj} files with trimesh.
+  \item \textbf{Analytic sphere projections:} equirectangular, Mercator and stereographic.
+  \item \textbf{Tutte embedding} with uniform or mean-value weights: fix the boundary loop to a circle and solve
+        a sparse linear system for the interior vertices.
+  \item \textbf{Least Squares Conformal Maps (LSCM):} free boundary, with two boundary vertices pinned far
+        apart to remove the null space (translation, rotation and scale) so the system is not singular.
+  \item \textbf{Cut step for closed meshes:} Tutte and LSCM require disk topology. A closed genus-0 mesh is cut
+        along a shortest edge path (Dijkstra) between two chosen vertices to create one boundary loop; a torus
+        needs two cuts (a meridian and a longitude). Methods are tested on disks first.
+  \item \textbf{Distortion analysis:} for each triangle, the Jacobian $J$ of the map from the triangle's 3D plane
+        to UV space, and its singular values $\sigma_1 \ge \sigma_2$:
+        \[
+          \text{angle distortion} = \frac{\sigma_1}{\sigma_2}, \qquad
+          \text{area distortion} = \sigma_1 \sigma_2, \qquad
+          \text{fold-over} \iff \det J < 0 .
+        \]
+  \item \textbf{Viewer (Polyscope):} switch between methods, view the 3D mesh and its 2D UV layout, and toggle
+        distortion heatmaps and a checkerboard texture.
+\end{enumerate}
+
+\subsection*{Built-in tests from theory}
+\begin{itemize}
+  \item Tutte with positive weights and a convex boundary must give zero fold-overs.
+  \item Mercator is conformal, so measured $\sigma_1/\sigma_2$ should be close to 1 away from the poles.
+  \item Unit tests on mesh generation: vertices on the sphere, valid face indices, no degenerate triangles,
+        outward normals.
+\end{itemize}
+
+\section{Evaluation}
+Two evaluations, done thoroughly:
+\begin{enumerate}
+  \item \textbf{Distortion by method and mesh:} a table of mean, 95th-percentile and maximum angle and area
+        distortion, plus fold-over counts, for each method on each test mesh, with heatmap figures.
+  \item \textbf{Solve time vs.\ mesh size:} timing for Tutte and LSCM across mesh resolutions, on a log-log plot.
+\end{enumerate}
+libigl's Python bindings are used only to validate our implementations during development, not as part of the
+submitted code or as a reported result.
+
+\section{Stretch goals}
+Each can be dropped without affecting the core.
+\begin{itemize}
+  \item \textbf{Cotangent (harmonic) weights:} these go negative when the two angles opposite an edge sum to more
+        than $180^\circ$, so fold-overs are reported separately for this case.
+  \item \textbf{ARAP parameterization} (Liu et al.\ 2008).
+  \item \textbf{Multi-chart atlas} with chart segmentation.
+  \item \textbf{Procedural 3D shaders} that need no UV map (moved from the core).
+  \item \textbf{Phone-scanned objects} with mesh cleanup (moved from the core).
+  \item \textbf{Web front end} (React, Three.js, GLSL), lowest priority.
+  \item \textbf{Projection mapping ladder:}
+        \begin{itemize}
+          \item A1: project onto a known shape (sphere or box), pose from clicked correspondences
+                (\texttt{cv2.solvePnP}), rendering from the projector's viewpoint.
+          \item A2: project onto a phone-scanned object, registered manually and UV-mapped with our code.
+          \item A3: structured-light (Gray code) scanning with the projector and a camera, giving a mesh already in
+                the projector's frame.
+        \end{itemize}
+\end{itemize}
+
+\section{Tools}
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Purpose} & \textbf{Tool} \\
+\midrule
+Language & Python \\
+Math and sparse solves & NumPy, SciPy \\
+Mesh input & trimesh (file I/O only) \\
+Viewer & Polyscope \\
+Plots & Matplotlib \\
+Tests & pytest \\
+Validation only & libigl Python bindings \\
+Stretch (projector) & OpenCV, projector, webcam, phone photogrammetry app \\
+Collaboration & Git and GitHub \\
+\bottomrule
+\end{tabular}
+
+\section{Paper presentations}
+Individual; each of us presents a different paper. Choices are due Wed Oct 28.
+\begin{itemize}
+  \item Lévy, Petitjean, Ray and Maillot, \emph{Least Squares Conformal Maps for Automatic Texture Atlas
+        Generation}, SIGGRAPH 2002.
+  \item Sander, Snyder, Gortler and Hoppe, \emph{Texture Mapping Progressive Meshes}, SIGGRAPH 2001. Its stretch
+        metric uses the same singular-value idea as our distortion maps.
+\end{itemize}
+
+\section{Schedule}
+\begin{tabular}{@{}ll>{\raggedright\arraybackslash}p{7.2cm}@{}}
+\toprule
+\textbf{Date} & \textbf{Deliverable} & \textbf{Target} \\
+\midrule
+Wed Oct 28 & Paper choices & LSCM and Sander et al., one each \\
+Thu Nov 5  & Paper presentations & Each paper plus related works \\
+Tue Nov 17 & Milestone & Viewer with sphere projections and Tutte, heatmaps, theory tests passing \\
+Late Nov   & Core complete & LSCM, cut step, both evaluations \\
+Tue Dec 8  & Demo and final report & Live demo, backup video, report and code \\
+\bottomrule
+\end{tabular}
+
+\medskip
+\noindent The task-level schedule with dependencies is in the separate task table document.
+
+\section{Risks}
+\begin{itemize}
+  \item \textbf{LSCM numerics:} a singular system if the pins are missing or poorly placed. Mitigated by pinning two
+        distant boundary vertices and validating against libigl.
+  \item \textbf{Cutting closed meshes:} seam paths can produce awkward boundaries. Mitigated by testing on disks
+        first and keeping atlas segmentation as stretch.
+  \item \textbf{Hardware access} for the projector stretch goals: borrow and test early.
+\end{itemize}
+
+\section*{References}
+\begin{itemize}
+  \item K.~Hormann, B.~Lévy, A.~Sheffer, \emph{Mesh Parameterization: Theory and Practice}, SIGGRAPH Course Notes,
+        2007.
+  \item B.~Lévy, S.~Petitjean, N.~Ray, J.~Maillot, \emph{Least Squares Conformal Maps for Automatic Texture Atlas
+        Generation}, SIGGRAPH 2002.
+  \item P.~Sander, J.~Snyder, S.~Gortler, H.~Hoppe, \emph{Texture Mapping Progressive Meshes}, SIGGRAPH 2001.
+  \item M.~Floater, \emph{Mean Value Coordinates}, CAGD, 2003.
+  \item W.~T.~Tutte, \emph{How to Draw a Graph}, Proc.\ London Mathematical Society, 1963.
+  \item L.~Liu, L.~Zhang, Y.~Xu, C.~Gotsman, S.~Gortler, \emph{A Local/Global Approach to Mesh Parameterization},
+        SGP 2008.
+  \item J.~Snyder, \emph{Map Projections: A Working Manual}, USGS Professional Paper 1395, 1987.
+  \item R.~Raskar, G.~Welch, K.-L.~Low, D.~Bandyopadhyay, \emph{Shader Lamps: Animating Real Objects with
+        Image-Based Illumination}, EGWR 2001.
+\end{itemize}
+
+\end{document}
