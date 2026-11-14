@@ -18,6 +18,7 @@ if __name__ == "__main__":
 from src.shapes import uv_sphere, disk, hemisphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
 from src.param.tutte import tutte_embedding
+from src.distortion import compute_distortion_metrics
 
 try:
     import trimesh
@@ -26,12 +27,82 @@ except ImportError:
     HAS_TRIMESH = False
 
 
+def add_distortion_heatmaps(ps_mesh, V, F, UV, method_name):
+    """
+    Add distortion heatmap visualizations to a polyscope mesh.
+
+    Parameters
+    ----------
+    ps_mesh : polyscope mesh object
+        The registered mesh to add quantities to
+    V : ndarray, shape (N, 3)
+        3D vertex positions
+    F : ndarray, shape (M, 3)
+        Triangle faces
+    UV : ndarray, shape (N, 2)
+        UV coordinates
+    method_name : str
+        Name of the parameterization method (for labeling)
+    """
+    print(f"  Computing distortion metrics for {method_name}...")
+
+    # Compute distortion metrics
+    metrics = compute_distortion_metrics(V, F, UV)
+
+    # Convert per-face metrics to per-vertex by averaging
+    angle_distortion_vertices = np.zeros(V.shape[0])
+    area_distortion_vertices = np.zeros(V.shape[0])
+    vertex_face_count = np.zeros(V.shape[0])
+
+    for face_idx, face in enumerate(F):
+        angle_dist = metrics['angle_distortion'][face_idx]
+        area_dist = metrics['area_distortion'][face_idx]
+
+        if not np.isnan(angle_dist):
+            for v_idx in face:
+                angle_distortion_vertices[v_idx] += angle_dist
+                area_distortion_vertices[v_idx] += area_dist
+                vertex_face_count[v_idx] += 1
+
+    # Average
+    mask = vertex_face_count > 0
+    angle_distortion_vertices[mask] /= vertex_face_count[mask]
+    area_distortion_vertices[mask] /= vertex_face_count[mask]
+
+    # Add as scalar quantities (will show as heatmaps)
+    ps_mesh.add_scalar_quantity(
+        f"{method_name}: Angle Distortion",
+        angle_distortion_vertices,
+        defined_on='vertices',
+        enabled=False,
+        cmap='turbo',
+        vminmax=(1.0, np.nanmax(metrics['angle_distortion']))
+    )
+
+    ps_mesh.add_scalar_quantity(
+        f"{method_name}: Area Distortion",
+        area_distortion_vertices,
+        defined_on='vertices',
+        enabled=False,
+        cmap='turbo',
+        vminmax=(0.0, np.nanmax(metrics['area_distortion']))
+    )
+
+    print(f"    Angle distortion: mean={metrics['mean_angle_distortion']:.3f}, max={metrics['max_angle_distortion']:.3f}")
+    print(f"    Area distortion: mean={metrics['mean_area_distortion']:.3f}, max={metrics['max_area_distortion']:.3f}")
+    print(f"    Fold-overs: {metrics['num_fold_overs']}")
+
+
 def main():
     """Main viewer entry point."""
     # Initialize polyscope
     ps.init()
     ps.set_ground_plane_mode("none")
     ps.set_up_dir("z_up")
+
+    # Set better initial camera view - zoom out to see all three meshes
+    ps.reset_camera_to_home_view()
+    ps.look_at((0.0, -8.0, 3.0), (0.0, 0.0, 0.0))
 
     # Generate and register the UV sphere
     print("Generating UV sphere...")
@@ -54,6 +125,12 @@ def main():
     ps_mesh_sphere.add_parameterization_quantity("Stereographic", uv_stereo,
                                                   defined_on='vertices', enabled=False)
 
+    # Add distortion heatmaps for sphere parameterizations
+    print("Adding distortion heatmaps for sphere...")
+    add_distortion_heatmaps(ps_mesh_sphere, V_sphere, F_sphere, uv_equirect, "Equirectangular")
+    add_distortion_heatmaps(ps_mesh_sphere, V_sphere, F_sphere, uv_mercator, "Mercator")
+    add_distortion_heatmaps(ps_mesh_sphere, V_sphere, F_sphere, uv_stereo, "Stereographic")
+
     # Generate and register a hemisphere with Tutte embedding
     print("\nGenerating hemisphere for Tutte embedding...")
     V_hemi, F_hemi = hemisphere(n_lat=20, n_lon=40, radius=1.0)
@@ -75,6 +152,12 @@ def main():
                                                     defined_on='vertices', enabled=True)
         ps_mesh_hemi.add_parameterization_quantity("Tutte (Mean-Value)", uv_tutte_meanvalue,
                                                     defined_on='vertices', enabled=False)
+
+        # Add distortion heatmaps for hemisphere
+        print("Adding distortion heatmaps for hemisphere...")
+        add_distortion_heatmaps(ps_mesh_hemi, V_hemi, F_hemi, uv_tutte_uniform, "Tutte Uniform")
+        add_distortion_heatmaps(ps_mesh_hemi, V_hemi, F_hemi, uv_tutte_meanvalue, "Tutte Mean-Value")
+
         print("Tutte embeddings added successfully!")
     except Exception as e:
         print(f"Error computing Tutte embedding: {e}")
@@ -100,6 +183,12 @@ def main():
                                                     defined_on='vertices', enabled=True)
         ps_mesh_disk.add_parameterization_quantity("Tutte (Mean-Value)", uv_disk_meanvalue,
                                                     defined_on='vertices', enabled=False)
+
+        # Add distortion heatmaps for disk
+        print("Adding distortion heatmaps for disk...")
+        add_distortion_heatmaps(ps_mesh_disk, V_disk, F_disk, uv_disk_uniform, "Tutte Uniform")
+        add_distortion_heatmaps(ps_mesh_disk, V_disk, F_disk, uv_disk_meanvalue, "Tutte Mean-Value")
+
         print("Disk Tutte embeddings added successfully!")
     except Exception as e:
         print(f"Error computing Tutte embedding for disk: {e}")
@@ -148,9 +237,15 @@ def main():
     print("  - UV Sphere (center): Analytic sphere projections")
     print("  - Hemisphere (left): Tutte embedding of curved surface")
     print("  - Disk (right): Tutte embedding of planar surface")
+    print("\nVisualization Options (in right panel):")
+    print("  - Parameterization: Shows checkerboard UV pattern")
+    print("  - Angle Distortion: Heatmap (blue=low, red=high distortion)")
+    print("  - Area Distortion: Heatmap (blue=low, red=high distortion)")
     print("\nControls:")
-    print("  - Toggle between parameterizations in the UI")
-    print("  - Compare distortion between uniform and mean-value weights")
+    print("  - Click mesh names to select them")
+    print("  - Toggle between parameterizations and heatmaps")
+    print("  - Scroll to zoom, left-drag to rotate, right-drag to pan")
+    print("  - Compare distortion between different methods")
     print("  - Close the window to exit")
     print("="*70)
 
