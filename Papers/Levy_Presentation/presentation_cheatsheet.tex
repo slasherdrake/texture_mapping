@@ -1,0 +1,336 @@
+\documentclass[10pt,landscape]{article}
+\usepackage[utf8]{inputenc}
+\usepackage[landscape,margin=0.5in]{geometry}
+\usepackage{multicol}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{titlesec}
+\usepackage{array}
+\usepackage{booktabs}
+
+% Reduce spacing
+\setlength{\parindent}{0pt}
+\setlength{\parskip}{2pt}
+\setlist{nosep,leftmargin=*}
+
+% Section formatting
+\titleformat{\section}{\large\bfseries\color{blue!70!black}}{\thesection}{0.5em}{}
+\titleformat{\subsection}{\normalsize\bfseries\color{blue!50!black}}{\thesubsection}{0.5em}{}
+\titlespacing*{\section}{0pt}{4pt}{2pt}
+\titlespacing*{\subsection}{0pt}{3pt}{1pt}
+
+% Custom commands
+\newcommand{\slide}[1]{\section*{Slide #1}}
+\newcommand{\pro}{\textcolor{green!60!black}{$\checkmark$}}
+\newcommand{\con}{\textcolor{red}{$\times$}}
+
+\pagestyle{empty}
+
+\begin{document}
+
+\begin{center}
+\Large\textbf{LSCM Presentation Cheatsheet}\\
+\normalsize Least Squares Conformal Maps (SIGGRAPH 2002)
+\end{center}
+
+\begin{multicols}{3}
+\small
+
+\slide{1: Title}
+\textbf{Paper:} LSCM for Automatic Texture Atlas Generation\\
+\textbf{Authors:} Lévy, Petitjean, Ray, Maillot\\
+\textbf{Presenter:} Tanner Muscarella
+
+\slide{2: The Problem}
+\textbf{Goal:} Paint high-res details on 3D models
+
+\textbf{Challenge:}
+\begin{itemize}
+\item Map 3D surface $\rightarrow$ 2D texture
+\item Cut into charts (disk topology)
+\item Parameterize each chart
+\end{itemize}
+
+\textbf{Prior methods problems:}
+\begin{itemize}
+\item Require \textbf{convex boundaries}
+\item Generate \textbf{many small charts}
+\item Seams, artifacts, hard to paint
+\end{itemize}
+
+\textcolor{red}{\textbf{Key:}} Need fewer, larger charts with natural boundaries
+
+\slide{3: Conformal Mappings}
+\textbf{Definition:} Preserves angles locally
+
+\textbf{Cauchy-Riemann condition:}
+\[
+\frac{\partial U}{\partial x} + i \frac{\partial U}{\partial y} = 0
+\]
+where $U = u + iv$ (complex)
+
+\textbf{Meaning:}
+\begin{itemize}
+\item Iso-$u$ and iso-$v$ tangents: orthogonal, same length
+\item Maps circles to circles locally
+\end{itemize}
+
+\textbf{Trade-off:} Cannot preserve BOTH angles AND areas (Theorema Egregium)
+
+\textcolor{red}{\textbf{Key insight:}} Use complex numbers to couple $u$ and $v$ directly!
+
+\slide{4: LSCM Method}
+\textbf{Key Idea:} Minimize Cauchy-Riemann violation (least-squares)
+
+\textbf{Per-Triangle:}
+\[
+C(T) = \left| \frac{\partial U}{\partial x} + i \frac{\partial U}{\partial y} \right|^2 A_T
+\]
+
+\textbf{Global:}
+\[
+C(\mathbf{U}) = \sum_{T} C(T) = \mathbf{U}^* \mathbf{C} \mathbf{U}
+\]
+where $\mathbf{C} = \mathbf{M}^* \mathbf{M}$ (Hermitian Gram matrix)
+
+\textbf{Result:}
+\begin{itemize}
+\item Quadratic $\Rightarrow$ \textbf{sparse linear system}
+\item Pin only \textbf{2 vertices} $\Rightarrow$ unique solution
+\item Solve with Conjugate Gradient (fast!)
+\end{itemize}
+
+\textbf{Algorithm:}
+\begin{enumerate}
+\item Build sparse matrix $\mathbf{M}$ (one row per triangle)
+\item Pin 2 boundary vertices
+\item Solve $(\mathbf{A}^\top \mathbf{A})\mathbf{x} = \mathbf{A}^\top \mathbf{b}$
+\item Extract UV coordinates
+\end{enumerate}
+
+\slide{5: Why LSCM is Better}
+\textbf{Four Guarantees:}
+
+\begin{enumerate}
+\item \textbf{Unique Minimum}\\
+No local minima (vs MIPS)
+
+\item \textbf{Free Boundary}\\
+Boundary moves freely\\
+No convex polygon needed\\
+Complex borders OK!
+
+\item \textbf{No Triangle Flips}\\
+Orientation preserved\\
+$\det(J) > 0$ always
+
+\item \textbf{Resolution Independent}\\
+Unchanged when mesh refined\\
+Good for LOD
+\end{enumerate}
+
+\textbf{Practical:} Fast sparse solve vs expensive non-linear optimization
+
+\slide{6: Pipeline}
+\textbf{Three Steps:}
+
+\textbf{1. Segmentation}
+\begin{itemize}
+\item Detect features (high curvature)
+\item Region growing from seeds
+\item Charts meet at features
+\end{itemize}
+
+\textbf{2. Parameterization}
+\begin{itemize}
+\item Apply LSCM to each chart
+\item Pin 2 boundary vertices
+\item Solve sparse linear system
+\end{itemize}
+
+\textbf{3. Packing}
+\begin{itemize}
+\item ``Tetris'' algorithm
+\item Handles complex borders
+\item Better than bounding rectangles
+\end{itemize}
+
+\textcolor{red}{\textbf{Advantage:}} Free boundary $\Rightarrow$ larger charts $\Rightarrow$ fewer discontinuities
+
+\columnbreak
+
+\slide{7: Results - Large Charts}
+\textbf{Horse Body:}
+\begin{itemize}
+\item \textbf{72,438 triangles} in single chart!
+\item Complex, non-convex boundary
+\item Free boundary extrapolated
+\item Robust despite large triangles
+\end{itemize}
+
+\textbf{Comparison (Cow Head):}
+
+\begin{tabular}{lcc}
+\toprule
+Method & Before & After \\
+\midrule
+Harmonic Maps & 3.2 & 1.65 \\
+\textbf{LSCM} & \textbf{3.5} & \textbf{1.52} \\
+\bottomrule
+\end{tabular}
+
+Similar quality, LSCM enables larger charts
+
+\slide{8: More Results}
+\textbf{Statistics:}
+\begin{itemize}
+\item Bunny: 23 charts (69K faces)
+\item Horse: 44 charts (97K faces)
+\item Natural boundaries
+\item Low angle distortion
+\end{itemize}
+
+\textbf{Benefits:}
+\begin{itemize}
+\item Fewer charts vs prior methods
+\item Follow geometric features
+\item Easier to paint large areas
+\item Good for procedural textures
+\end{itemize}
+
+\slide{9: Comparison}
+\subsection*{1. Harmonic Maps (1994)}
+\pro\ Fast, similar quality\\
+\con\ Requires convex boundary\\
+\con\ Indirect coupling ($u$, $v$ separate)\\
+\textbf{Limitation:} Many small charts
+
+\subsection*{2. MIPS (2000)}
+\pro\ Free boundary\\
+\con\ Non-linear (expensive, local minima)\\
+\con\ No guarantees\\
+\textbf{LSCM:} Same flexibility + guarantees + faster
+
+\slide{10: Impact \& Limitations}
+\textbf{Impact (20+ years):}
+\begin{itemize}
+\item Still widely used in production
+\item Foundation for ARAP, multi-chart methods
+\item In 3D paint, game engines, animation
+\end{itemize}
+
+\textbf{Limitations:}
+\begin{itemize}
+\item \textbf{Area distortion:} Conformal $\Rightarrow$ area variation (fixable via post-processing)
+\item \textbf{Overlaps possible:} If boundary self-intersects (rare, auto-detected)
+\item \textbf{Needs cutting:} Charts must be disk topology
+\end{itemize}
+
+\slide{11: Takeaways}
+\textbf{Three Contributions:}
+
+\textbf{1. LSCM Parameterization}
+\begin{itemize}
+\item Fast, robust, flexible
+\end{itemize}
+
+\textbf{2. Complex Formulation}
+\begin{itemize}
+\item Direct $u$-$v$ coupling
+\item Elegant Cauchy-Riemann
+\item Quadratic minimization
+\end{itemize}
+
+\textbf{3. Complete Pipeline}
+\begin{itemize}
+\item Feature segmentation
+\item LSCM parameterization
+\item Efficient packing
+\end{itemize}
+
+\textcolor{red}{\textbf{Bottom line:}} Large charts with natural boundaries $\Rightarrow$ better texture atlases
+
+\columnbreak
+
+\section*{Key Talking Points}
+
+\subsection*{Opening (Slide 2)}
+\textit{``The problem this paper solves is creating texture atlases for 3D paint systems. Prior methods required convex boundaries, forcing many small charts with visible seams.''}
+
+\subsection*{Core Innovation (Slide 4)}
+\textit{``The key insight is using complex numbers to directly couple $u$ and $v$ coordinates. This transforms the conformal mapping into a simple quadratic minimization solved with a sparse linear system.''}
+
+\subsection*{Why It Matters (Slide 5)}
+\textit{``Unlike previous methods, LSCM provides mathematical guarantees: unique solution, no triangle flips, and free boundaries. This enables much larger charts.''}
+
+\subsection*{Impact (Slide 10)}
+\textit{``Twenty years later, this method is still widely used in production and has influenced many follow-up papers.''}
+
+\section*{Common Q\&A}
+
+\textbf{Q: Why complex numbers?}\\
+A: Elegantly couple $u$ and $v$ in one equation. Cauchy-Riemann naturally expresses conformality. Multiplication by $i$ = 90° rotation.
+
+\textbf{Q: What if boundary self-intersects?}\\
+A: LSCM guarantees no triangle flips, but boundary can self-intersect in UV, creating overlaps. Auto-detected, rare. If happens, subdivide chart.
+
+\textbf{Q: Compare to modern methods?}\\
+A: Still competitive. ARAP builds on LSCM but optimizes different criteria (less area distortion).
+
+\textbf{Q: Computational cost?}\\
+A: $O(n)$ matrix construction, $O(n \log n)$ to $O(n^2)$ for CG solve. Much faster than non-linear methods.
+
+\textbf{Q: Why only 2 pinned vertices?}\\
+A: Need $\geq 2$ to remove translation/rotation ambiguity. Exactly 2 is optimal---allows maximum conformality. More pins over-constrain.
+
+\section*{Technical Details}
+
+\subsection*{Matrix M construction:}
+One row per triangle, one column per vertex\\
+$M[i,j] = W_j / \sqrt{2 \cdot \text{Area}_i}$ if vertex $j$ in triangle $i$
+
+\subsection*{Weight computation:}
+For triangle with local coords $(x_1,y_1), (x_2,y_2), (x_3,y_3)$:
+\begin{align*}
+W_1 &= (x_3-x_2) + i(y_3-y_2)\\
+W_2 &= (x_1-x_3) + i(y_1-y_3)\\
+W_3 &= (x_2-x_1) + i(y_2-y_1)
+\end{align*}
+Note: $W_1 + W_2 + W_3 = 0$ always
+
+\subsection*{Stretch metric:}
+Texture area / model area ratio. Lower = better. LSCM: 1.52 after optimization (competitive)
+
+\section*{Timing (10 min)}
+\begin{tabular}{ll}
+Slide 1 & 15 sec\\
+Slide 2 & 1 min\\
+Slide 3 & 1 min\\
+Slide 4 & 1.5 min \textbf{(most important)}\\
+Slide 5 & 1 min\\
+Slide 6 & 45 sec\\
+Slide 7 & 1 min\\
+Slide 8 & 45 sec\\
+Slide 9 & 1.5 min\\
+Slide 10 & 1 min\\
+Slide 11 & 45 sec\\
+\end{tabular}
+
+\vspace{4pt}
+\textbf{Total:} $\sim$10 min (leave time for questions)
+
+\section*{Remember}
+\begin{itemize}
+\item Speak clearly, not too fast
+\item Eye contact with audience
+\item Point to figures when discussing
+\item Emphasize \textbf{free boundary} (main contribution)
+\item If short on time, abbreviate slides 8-9
+\item Have paper open for reference
+\end{itemize}
+
+\end{multicols}
+
+\end{document}
