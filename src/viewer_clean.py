@@ -127,14 +127,19 @@ def update_display():
     # Choose which distortion to show
     if state.distortion_type == 0:
         distortion_values = angle_dist
-        max_val = np.nanmax(metrics['angle_distortion'])
+        # Use percentile for better visualization (exclude extreme outliers)
+        max_val = np.nanpercentile(angle_dist, 95)  # 95th percentile
         min_val = 1.0
         dist_name = "Angle"
     else:
         distortion_values = area_dist
-        max_val = np.nanmax(metrics['area_distortion'])
+        # Use percentile for better visualization
+        max_val = np.nanpercentile(area_dist, 95)  # 95th percentile
         min_val = 0.0
         dist_name = "Area"
+
+    # Clamp distortion values to the range for better visualization
+    distortion_values = np.clip(distortion_values, min_val, max_val)
 
     # Left mesh: with UV parameterization (checkerboard)
     V_left = V.copy()
