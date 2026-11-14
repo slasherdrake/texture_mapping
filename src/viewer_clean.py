@@ -22,18 +22,26 @@ if __name__ == "__main__":
 
 from src.shapes import uv_sphere, disk, hemisphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
-from src.param.tutte import tutte_embedding
+from src.param.tutte import tutte_embedding, find_boundary_vertices
+from src.param.cut import cut_mesh_to_disk
 from src.distortion import compute_distortion_metrics
+
+try:
+    import trimesh
+    HAS_TRIMESH = True
+except ImportError:
+    HAS_TRIMESH = False
+    print("Warning: trimesh not available, cannot load .obj files")
 
 
 # Global state for UI
 class ViewerState:
     def __init__(self):
-        self.current_mesh = 0  # 0=sphere, 1=hemisphere, 2=disk
+        self.current_mesh = 0  # Index into mesh_names
         self.current_method = 0  # Index into available methods for current mesh
         self.distortion_type = 0  # 0=angle, 1=area
 
-        self.mesh_names = ["UV Sphere", "Hemisphere", "Disk"]
+        self.mesh_names = ["UV Sphere", "Hemisphere", "Disk", "Spot", "Bunny", "Armadillo"]
         self.sphere_methods = ["Equirectangular", "Mercator", "Stereographic"]
         self.tutte_methods = ["Tutte Uniform", "Tutte Mean-Value"]
 
@@ -79,14 +87,18 @@ def update_display():
         ps.remove_surface_mesh("Mesh (Heatmap)")
 
     # Get current mesh data
+    mesh_key = state.mesh_names[state.current_mesh].lower()
+
+    if mesh_key not in state.meshes:
+        print(f"Error: mesh '{mesh_key}' not loaded")
+        return
+
+    mesh_data = state.meshes[mesh_key]
+
+    # Determine available methods for this mesh
     if state.current_mesh == 0:  # Sphere
-        mesh_data = state.meshes['sphere']
         methods = state.sphere_methods
-    elif state.current_mesh == 1:  # Hemisphere
-        mesh_data = state.meshes['hemisphere']
-        methods = state.tutte_methods
-    else:  # Disk
-        mesh_data = state.meshes['disk']
+    else:  # All others use Tutte
         methods = state.tutte_methods
 
     # Ensure method index is valid
@@ -289,11 +301,86 @@ def main():
         }
     }
 
+    # ========== LOAD 3D MESHES ==========
+    if HAS_TRIMESH:
+        meshes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "meshes")
+        mesh_files = {
+            'spot': 'spot.obj',
+            'bunny': 'bunny.obj',
+            'armadillo': 'armadillo.obj'
+        }
+
+        for mesh_name, filename in mesh_files.items():
+            mesh_path = os.path.join(meshes_dir, filename)
+            if not os.path.exists(mesh_path):
+                print(f"\nSkipping {mesh_name}: {filename} not found")
+                continue
+
+            print(f"\n{len(state.meshes)+1}. Loading {mesh_name.capitalize()}...")
+            try:
+                mesh = trimesh.load(mesh_path)
+                V_loaded = np.array(mesh.vertices, dtype=np.float64)
+                F_loaded = np.array(mesh.faces, dtype=np.int64)
+
+                # Center and scale
+                center = V_loaded.mean(axis=0)
+                V_loaded -= center
+                scale = np.max(np.linalg.norm(V_loaded, axis=1))
+                if scale > 0:
+                    V_loaded /= scale
+
+                print(f"   Loaded: {V_loaded.shape[0]} vertices, {F_loaded.shape[0]} faces")
+
+                # Check if mesh has boundary or needs cutting
+                boundary, _ = find_boundary_vertices(F_loaded, V_loaded.shape[0])
+
+                if len(boundary) == 0:
+                    # Closed mesh - need to cut it
+                    print("   Mesh is closed, cutting to disk topology...")
+                    V_loaded, F_loaded, boundary = cut_mesh_to_disk(V_loaded, F_loaded)
+                    print(f"   After cutting: {V_loaded.shape[0]} vertices, {F_loaded.shape[0]} faces")
+                else:
+                    print(f"   Mesh has boundary: {len(boundary)} vertices")
+
+                # Apply Tutte embedding
+                print("   Computing Tutte embeddings...")
+                uv_uniform = tutte_embedding(V_loaded, F_loaded, weight_type='uniform')
+                uv_meanvalue = tutte_embedding(V_loaded, F_loaded, weight_type='mean_value')
+
+                print("   Computing distortion metrics...")
+                metrics_uniform = compute_distortion_metrics(V_loaded, F_loaded, uv_uniform)
+                metrics_meanvalue = compute_distortion_metrics(V_loaded, F_loaded, uv_meanvalue)
+
+                state.meshes[mesh_name] = {
+                    'V': V_loaded,
+                    'F': F_loaded,
+                    'uvs': {
+                        'Tutte Uniform': uv_uniform,
+                        'Tutte Mean-Value': uv_meanvalue,
+                    },
+                    'metrics': {
+                        'Tutte Uniform': metrics_uniform,
+                        'Tutte Mean-Value': metrics_meanvalue,
+                    }
+                }
+
+                print(f"   ✓ {mesh_name.capitalize()} loaded successfully")
+
+            except Exception as e:
+                print(f"   ✗ Error loading {mesh_name}: {e}")
+                import traceback
+                traceback.print_exc()
+    else:
+        print("\n⚠️  trimesh not available - 3D meshes will not be loaded")
+
     print("\n" + "="*70)
     print("VIEWER READY!")
     print("="*70)
+    print(f"\nLoaded {len(state.meshes)} meshes:")
+    for mesh_name in state.meshes.keys():
+        print(f"  - {mesh_name.capitalize()}")
     print("\nUse the UI panel on the right to:")
-    print("  - Select mesh (Sphere/Hemisphere/Disk)")
+    print("  - Select mesh from dropdown")
     print("  - Select parameterization method")
     print("  - Toggle between angle/area distortion")
     print("\nLeft mesh: UV checkerboard texture")
