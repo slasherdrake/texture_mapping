@@ -23,6 +23,7 @@ if __name__ == "__main__":
 from src.shapes import uv_sphere, disk, hemisphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
 from src.param.tutte import tutte_embedding, find_boundary_vertices
+from src.param.lscm import lscm_embedding
 from src.param.cut import cut_mesh_to_disk
 from src.distortion import compute_distortion_metrics
 
@@ -42,13 +43,15 @@ class ViewerState:
         self.distortion_type = 0  # 0=angle, 1=area
 
         self.mesh_names = ["UV Sphere", "Hemisphere", "Disk", "Spot", "Bunny", "Armadillo"]
-        self.sphere_methods = ["Equirectangular", "Mercator", "Stereographic"]
-        self.tutte_methods = ["Tutte Uniform", "Tutte Mean-Value"]
-
         # Will be populated with mesh data
         self.meshes = {}
         self.current_mesh_left = None
         self.current_mesh_right = None
+
+    def available_methods(self):
+        name = self.mesh_names[self.current_mesh]
+        key = 'sphere' if name == 'UV Sphere' else name.lower()
+        return list(self.meshes[key]['uvs'])
 
 
 state = ViewerState()
@@ -105,11 +108,7 @@ def update_display():
 
     mesh_data = state.meshes[mesh_key]
 
-    # Determine available methods for this mesh
-    if state.current_mesh == 0:  # Sphere
-        methods = state.sphere_methods
-    else:  # All others use Tutte
-        methods = state.tutte_methods
+    methods = state.available_methods()
 
     # Ensure method index is valid
     if state.current_method >= len(methods):
@@ -184,11 +183,8 @@ def ui_callback():
     psim.Separator()
     psim.TextUnformatted("=== Parameterization Method ===")
 
-    # Method selector (changes based on mesh)
-    if state.current_mesh == 0:  # Sphere
-        methods = state.sphere_methods
-    else:  # Hemisphere or Disk
-        methods = state.tutte_methods
+    # Only offer methods successfully computed for the selected mesh.
+    methods = state.available_methods()
 
     changed, new_method = psim.Combo("Method", state.current_method, methods)
     if changed:
@@ -387,6 +383,23 @@ def main():
                 traceback.print_exc()
     else:
         print("\n⚠️  trimesh not available - 3D meshes will not be loaded")
+
+    # LSCM validates disk topology before solving. The existing cut routine may
+    # produce invalid charts; keep their Tutte results available if LSCM rejects one.
+    for name, data in state.meshes.items():
+        if name == 'sphere':
+            continue
+        try:
+            print(f"Computing LSCM for {name}...")
+            uv = lscm_embedding(data['V'], data['F'])
+            metrics = compute_distortion_metrics(data['V'], data['F'], uv)
+            data['uvs']['LSCM'] = uv
+            data['metrics']['LSCM'] = metrics
+        except ValueError as error:
+            print(f"LSCM unavailable for {name}: {error}")
+
+    state.mesh_names = [name for name in state.mesh_names
+                        if ('sphere' if name == 'UV Sphere' else name.lower()) in state.meshes]
 
     print("\n" + "="*70)
     print("VIEWER READY!")

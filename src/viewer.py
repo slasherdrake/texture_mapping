@@ -18,6 +18,7 @@ if __name__ == "__main__":
 from src.shapes import uv_sphere, disk, hemisphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
 from src.param.tutte import tutte_embedding
+from src.param.lscm import lscm_embedding
 from src.distortion import compute_distortion_metrics
 
 try:
@@ -139,7 +140,7 @@ def main():
     V_hemi_display = V_hemi.copy()
     V_hemi_display[:, 0] -= 2.5
 
-    ps_mesh_hemi = ps.register_surface_mesh("Hemisphere (Tutte)", V_hemi_display, F_hemi,
+    ps_mesh_hemi = ps.register_surface_mesh("Hemisphere", V_hemi_display, F_hemi,
                                              smooth_shade=True)
 
     # Compute Tutte embeddings
@@ -162,6 +163,11 @@ def main():
     except Exception as e:
         print(f"Error computing Tutte embedding: {e}")
 
+    uv_hemi_lscm = lscm_embedding(V_hemi, F_hemi)
+    ps_mesh_hemi.add_parameterization_quantity("LSCM", uv_hemi_lscm,
+                                              defined_on='vertices', enabled=False)
+    add_distortion_heatmaps(ps_mesh_hemi, V_hemi, F_hemi, uv_hemi_lscm, "LSCM")
+
     # Generate and register a planar disk with Tutte embedding
     print("\nGenerating planar disk for Tutte embedding...")
     V_disk, F_disk = disk(n_radial=15, n_angular=30, radius=1.0)
@@ -170,7 +176,7 @@ def main():
     V_disk_display = V_disk.copy()
     V_disk_display[:, 0] += 2.5
 
-    ps_mesh_disk = ps.register_surface_mesh("Disk (Tutte)", V_disk_display, F_disk,
+    ps_mesh_disk = ps.register_surface_mesh("Disk", V_disk_display, F_disk,
                                              smooth_shade=True)
 
     # Compute Tutte embeddings for disk
@@ -192,6 +198,11 @@ def main():
         print("Disk Tutte embeddings added successfully!")
     except Exception as e:
         print(f"Error computing Tutte embedding for disk: {e}")
+
+    uv_disk_lscm = lscm_embedding(V_disk, F_disk)
+    ps_mesh_disk.add_parameterization_quantity("LSCM", uv_disk_lscm,
+                                              defined_on='vertices', enabled=False)
+    add_distortion_heatmaps(ps_mesh_disk, V_disk, F_disk, uv_disk_lscm, "LSCM")
 
     # Try to load a mesh from the meshes/ directory
     meshes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "meshes")
@@ -235,8 +246,8 @@ def main():
     print("="*70)
     print("\nDisplaying:")
     print("  - UV Sphere (center): Analytic sphere projections")
-    print("  - Hemisphere (left): Tutte embedding of curved surface")
-    print("  - Disk (right): Tutte embedding of planar surface")
+    print("  - Hemisphere (left): Tutte and LSCM on a curved surface")
+    print("  - Disk (right): Tutte and LSCM on a planar surface")
     print("\nVisualization Options (in right panel):")
     print("  - Parameterization: Shows checkerboard UV pattern")
     print("  - Angle Distortion: Heatmap (blue=low, red=high distortion)")

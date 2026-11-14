@@ -163,8 +163,9 @@ def hemisphere(n_lat=40, n_lon=80, radius=1.0):
             v3 = next_ring_start + i_lon
 
             # Two triangles per quad
-            faces.append([v0, v1, v2])
-            faces.append([v0, v2, v3])
+            # Reverse the ring quads to match the outward-facing pole cap.
+            faces.append([v0, v2, v1])
+            faces.append([v0, v3, v2])
 
     V = np.array(vertices, dtype=np.float64)
     F = np.array(faces, dtype=np.int64)
@@ -300,8 +301,9 @@ def disk(n_radial=20, n_angular=40, radius=1.0):
             v3 = next_ring_start + j
 
             # Two triangles per quad
-            faces.append([v0, v1, v2])
-            faces.append([v0, v2, v3])
+            # Match the counterclockwise center fan.
+            faces.append([v0, v2, v1])
+            faces.append([v0, v3, v2])
 
     V = np.array(vertices, dtype=np.float64)
     F = np.array(faces, dtype=np.int64)

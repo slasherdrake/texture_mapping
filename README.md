@@ -6,8 +6,8 @@ Mapping 2D images onto curved 3D surfaces using custom parameterization methods.
 
 This project implements and evaluates various surface parameterization techniques:
 - Analytic sphere projections (equirectangular, Mercator, stereographic)
-- Tutte embedding (planned)
-- Least Squares Conformal Maps (LSCM) (planned)
+- Tutte embedding (uniform and mean-value weights)
+- Least Squares Conformal Maps (LSCM) with two pinned boundary vertices
 
 The goal is to understand distortion introduced by each method and visualize the results interactively.
 
@@ -51,6 +51,43 @@ This will open an interactive window showing:
 
 Toggle between different projections in the UI to see how distortion varies.
 
+The hemisphere and disk also offer **LSCM**, alongside both Tutte variants,
+with angle and area distortion heatmaps. For a method dropdown and side-by-side
+checkerboard/heatmap views, run:
+
+```bash
+python -m src.viewer_clean
+```
+
+Select **Hemisphere** or **Disk**, then choose **LSCM** from the Method dropdown.
+Imported meshes also offer LSCM when their topology and winding pass validation.
+
+### LSCM from Python
+
+```python
+from src.shapes import disk
+from src.param.lscm import lscm_embedding
+
+V, F = disk()
+UV = lscm_embedding(V, F)
+# Optionally supply two boundary indices and their exact UV coordinates:
+# UV = lscm_embedding(V, F, pinned_vertices=[a, b],
+#                     pinned_uv=[[0., 0.], [1., 0.]])
+```
+
+The implementation assembles area-weighted Cauchy-Riemann equations from scratch
+and uses SciPy's sparse least-squares solver. Two well-separated boundary vertices
+are pinned automatically; the rest of the boundary remains free. UV coordinates
+are not normalized to a square, so custom pins remain exact.
+
+Inputs must be connected, consistently wound triangle disks without degenerate
+faces or unused vertices. Closed meshes need a valid cut first. The existing
+experimental cut routine does not guarantee a valid disk, and some bundled OBJ
+meshes have multiple boundaries or components; the clean viewer reports why LSCM
+is unavailable and retains their existing methods. LSCM minimizes conformal
+distortion; it does not guarantee area preservation or prevent overlap for every
+mesh. See [LSCM_IMPLEMENTATION.md](LSCM_IMPLEMENTATION.md) for the equations.
+
 ### Run tests
 ```bash
 pytest
@@ -76,7 +113,9 @@ Tests verify:
 ├── src/
 │   ├── shapes.py        # Mesh generators (uv_sphere, hemisphere)
 │   ├── param/
-│   │   └── sphere_maps.py  # Analytic projections
+│   │   ├── sphere_maps.py  # Analytic projections
+│   │   ├── tutte.py        # Fixed-boundary embeddings
+│   │   └── lscm.py         # Free-boundary conformal least squares
 │   └── viewer.py        # Polyscope viewer
 ├── tests/
 │   └── test_shapes.py   # Mesh validation tests
