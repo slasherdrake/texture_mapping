@@ -87,10 +87,20 @@ def update_display():
         ps.remove_surface_mesh("Mesh (Heatmap)")
 
     # Get current mesh data
-    mesh_key = state.mesh_names[state.current_mesh].lower()
+    # Map display name to storage key
+    mesh_name = state.mesh_names[state.current_mesh]
+    mesh_key_map = {
+        "UV Sphere": "sphere",
+        "Hemisphere": "hemisphere",
+        "Disk": "disk",
+        "Spot": "spot",
+        "Bunny": "bunny",
+        "Armadillo": "armadillo"
+    }
+    mesh_key = mesh_key_map.get(mesh_name, mesh_name.lower())
 
     if mesh_key not in state.meshes:
-        print(f"Error: mesh '{mesh_key}' not loaded")
+        print(f"Error: mesh '{mesh_key}' not loaded (from display name '{mesh_name}')")
         return
 
     mesh_data = state.meshes[mesh_key]
