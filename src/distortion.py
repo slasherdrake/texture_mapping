@@ -132,6 +132,30 @@ def compute_triangle_jacobian(v0, v1, v2, uv0, uv1, uv2):
     return J
 
 
+def compute_triangle_area_signed(p0, p1, p2):
+    """
+    Compute signed area of a 2D triangle.
+
+    Parameters
+    ----------
+    p0, p1, p2 : array-like, shape (2,)
+        2D coordinates of triangle vertices
+
+    Returns
+    -------
+    area : float
+        Signed area (positive if CCW, negative if CW)
+    """
+    p0 = np.asarray(p0)
+    p1 = np.asarray(p1)
+    p2 = np.asarray(p2)
+
+    # Signed area = 0.5 * det([p1-p0, p2-p0])
+    v1 = p1 - p0
+    v2 = p2 - p0
+    return 0.5 * (v1[0] * v2[1] - v1[1] * v2[0])
+
+
 def compute_distortion_metrics(V, F, UV):
     """
     Compute per-triangle distortion metrics for a parameterized mesh.
@@ -154,15 +178,16 @@ def compute_distortion_metrics(V, F, UV):
         - 'angle_distortion' : σ₁/σ₂ (conformal when = 1)
         - 'area_distortion' : σ₁×σ₂ (equiareal when = 1)
         - 'determinant' : det(J) for each triangle
-        - 'fold_overs' : Boolean array, True where det(J) < 0
+        - 'fold_overs' : Boolean array, True where orientation is flipped
         - 'jacobians' : List of 2×2 Jacobian matrices
 
     Notes
     -----
     - angle_distortion = 1 means angles are preserved (conformal)
     - area_distortion = 1 means area is preserved (equiareal)
-    - det(J) < 0 means the triangle flipped orientation (fold-over)
+    - fold_over = True means the triangle's orientation flipped
     - Degenerate triangles return NaN for distortion metrics
+    - Fold-over detection: compares sign of 3D triangle area vs UV triangle area
     """
     n_faces = F.shape[0]
 
@@ -212,8 +237,35 @@ def compute_distortion_metrics(V, F, UV):
             det_J = det(J)
             determinants[i] = det_J
 
-            # Fold-over check
-            fold_overs[i] = (det_J < 0)
+            # Fold-over check: The correct way to detect fold-overs is to check if
+            # the orientation changes between 3D and UV. For a mesh with consistent
+            # winding order, we need to verify that triangles maintain their orientation.
+            #
+            # Compute both 3D and UV triangle areas with their signs
+            area_3d_signed = compute_triangle_area_signed(v0[:2], v1[:2], v2[:2])
+            area_uv_signed = compute_triangle_area_signed(uv0, uv1, uv2)
+
+            # For 3D meshes not in a plane, use the z-component of the normal
+            edge1_3d = v1 - v0
+            edge2_3d = v2 - v0
+            normal_3d = np.cross(edge1_3d, edge2_3d)
+
+            # Use z-component if mesh is approximately planar, else use full normal
+            if np.max(np.abs(V[:, 2])) < 1e-6:  # Planar mesh in XY
+                sign_3d = np.sign(area_3d_signed)
+            else:
+                # For curved meshes, we need to determine orientation differently
+                # The Jacobian determinant tells us if orientation is preserved
+                # We'll consider the first triangle's det(J) sign as the reference
+                sign_3d = np.sign(normal_3d[2]) if abs(normal_3d[2]) > 1e-12 else np.sign(det_J)
+
+            sign_uv = np.sign(area_uv_signed)
+
+            # Fold-over occurs when signs don't match
+            # But we need to account for the fact that the entire mesh might have
+            # one consistent orientation. Better: just check if UV area is negative
+            # when we expect positive (or vice versa) based on det(J)
+            fold_overs[i] = (sign_3d * sign_uv < 0) if (abs(sign_3d) > 0 and abs(sign_uv) > 0) else False
 
         except np.linalg.LinAlgError:
             # Singular matrix (degenerate triangle)
