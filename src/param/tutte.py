@@ -109,6 +109,16 @@ def find_boundary_vertices(F, n_vertices):
     is_boundary = np.zeros(n_vertices, dtype=bool)
     is_boundary[boundary] = True
 
+    # Verify consistency
+    if len(boundary) != is_boundary.sum():
+        print(f"Warning: boundary has {len(boundary)} vertices but is_boundary has {is_boundary.sum()} True values")
+        print(f"This indicates duplicate vertices in boundary list")
+        # Remove duplicates
+        boundary = np.unique(boundary)
+        is_boundary = np.zeros(n_vertices, dtype=bool)
+        is_boundary[boundary] = True
+        print(f"After deduplication: {len(boundary)} boundary vertices")
+
     return boundary, is_boundary
 
 
@@ -367,6 +377,10 @@ def tutte_embedding(V, F, weight_type='uniform', boundary_shape='circle'):
     interior_vertices = np.where(~is_boundary)[0]
     interior_to_row = {v: i for i, v in enumerate(interior_vertices)}
 
+    print(f"Debug: n_interior={n_interior}, len(interior_vertices)={len(interior_vertices)}")
+    print(f"Debug: n_boundary={n_boundary}, n_vertices={n_vertices}")
+    print(f"Debug: is_boundary.sum()={is_boundary.sum()}")
+
     # Build sparse matrix A and right-hand side b
     # A · UV_interior = b
     # where b comes from the boundary constraints
@@ -389,6 +403,9 @@ def tutte_embedding(V, F, weight_type='uniform', boundary_shape='circle'):
                 b_v[row] += weight * UV[neighbor, 1]
             else:
                 # Interior vertex: contributes to matrix
+                if neighbor not in interior_to_row:
+                    print(f"Warning: neighbor {neighbor} not in interior_to_row (v={v})")
+                    continue
                 neighbor_row = interior_to_row[neighbor]
                 A[row, neighbor_row] -= weight
 
