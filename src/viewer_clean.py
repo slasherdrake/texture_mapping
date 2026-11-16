@@ -25,6 +25,7 @@ from src.param.sphere_maps import equirectangular, mercator, stereographic
 from src.param.tutte import tutte_embedding, find_boundary_vertices
 from src.param.lscm import lscm_embedding
 from src.param.cut import cut_mesh_to_disk
+from src.param.mesh_cleanup import clean_mesh_for_lscm
 from src.distortion import compute_distortion_metrics
 
 try:
@@ -384,19 +385,30 @@ def main():
     else:
         print("\n⚠️  trimesh not available - 3D meshes will not be loaded")
 
-    # LSCM validates disk topology before solving. The existing cut routine may
-    # produce invalid charts; keep their Tutte results available if LSCM rejects one.
+    # LSCM validates disk topology before solving. Try cleaning meshes first.
     for name, data in state.meshes.items():
         if name == 'sphere':
             continue
         try:
-            print(f"Computing LSCM for {name}...")
-            uv = lscm_embedding(data['V'], data['F'])
-            metrics = compute_distortion_metrics(data['V'], data['F'], uv)
-            data['uvs']['LSCM'] = uv
-            data['metrics']['LSCM'] = metrics
+            print(f"\nComputing LSCM for {name}...")
+            # Try cleaning the mesh first
+            V_clean, F_clean = clean_mesh_for_lscm(data['V'], data['F'])
+            uv = lscm_embedding(V_clean, F_clean)
+
+            # LSCM succeeded on cleaned mesh
+            # Note: UV coordinates are for cleaned mesh, need to map back if vertices changed
+            if V_clean.shape[0] == data['V'].shape[0]:
+                # No vertices removed, use directly
+                metrics = compute_distortion_metrics(data['V'], data['F'], uv)
+                data['uvs']['LSCM'] = uv
+                data['metrics']['LSCM'] = metrics
+                print(f"  ✓ LSCM successful for {name}")
+            else:
+                # Vertices were removed - would need remapping
+                print(f"  ⚠ LSCM computed on cleaned subset ({V_clean.shape[0]}/{data['V'].shape[0]} vertices)")
+                print(f"  Skipping - vertex count mismatch")
         except ValueError as error:
-            print(f"LSCM unavailable for {name}: {error}")
+            print(f"  ✗ LSCM unavailable for {name}: {error}")
 
     state.mesh_names = [name for name in state.mesh_names
                         if ('sphere' if name == 'UV Sphere' else name.lower()) in state.meshes]
