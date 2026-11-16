@@ -1,8 +1,13 @@
 """
-Interactive viewer for meshes and parameterizations using polyscope.
+Clean viewer with side-by-side mesh and heatmap visualization.
 
-Run with: python -m src.viewer
-Or: python src/viewer.py
+Shows one mesh at a time with:
+- Left: Parameterized mesh with checkerboard texture
+- Right: Distortion heatmap
+
+Use UI to toggle between meshes and parameterization methods.
+
+Run with: python -m src.viewer_clean
 """
 
 import os
@@ -17,8 +22,8 @@ if __name__ == "__main__":
 
 from src.shapes import uv_sphere, disk, hemisphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
-from src.param.tutte import tutte_embedding
-from src.param.lscm import lscm_embedding
+from src.param.tutte import tutte_embedding, find_boundary_vertices
+from src.param.cut import cut_mesh_to_disk
 from src.distortion import compute_distortion_metrics
 
 try:
@@ -26,34 +31,34 @@ try:
     HAS_TRIMESH = True
 except ImportError:
     HAS_TRIMESH = False
+    print("Warning: trimesh not available, cannot load .obj files")
 
 
-def add_distortion_heatmaps(ps_mesh, V, F, UV, method_name):
-    """
-    Add distortion heatmap visualizations to a polyscope mesh.
+# Global state for UI
+class ViewerState:
+    def __init__(self):
+        self.current_mesh = 0  # Index into mesh_names
+        self.current_method = 0  # Index into available methods for current mesh
+        self.distortion_type = 0  # 0=angle, 1=area
 
-    Parameters
-    ----------
-    ps_mesh : polyscope mesh object
-        The registered mesh to add quantities to
-    V : ndarray, shape (N, 3)
-        3D vertex positions
-    F : ndarray, shape (M, 3)
-        Triangle faces
-    UV : ndarray, shape (N, 2)
-        UV coordinates
-    method_name : str
-        Name of the parameterization method (for labeling)
-    """
-    print(f"  Computing distortion metrics for {method_name}...")
+        self.mesh_names = ["UV Sphere", "Hemisphere", "Disk", "Spot", "Bunny", "Armadillo"]
+        self.sphere_methods = ["Equirectangular", "Mercator", "Stereographic"]
+        self.tutte_methods = ["Tutte Uniform", "Tutte Mean-Value"]
 
-    # Compute distortion metrics
-    metrics = compute_distortion_metrics(V, F, UV)
+        # Will be populated with mesh data
+        self.meshes = {}
+        self.current_mesh_left = None
+        self.current_mesh_right = None
 
-    # Convert per-face metrics to per-vertex by averaging
-    angle_distortion_vertices = np.zeros(V.shape[0])
-    area_distortion_vertices = np.zeros(V.shape[0])
-    vertex_face_count = np.zeros(V.shape[0])
+
+state = ViewerState()
+
+
+def compute_vertex_distortion(metrics, F, num_vertices):
+    """Convert per-face distortion to per-vertex by averaging."""
+    angle_distortion = np.zeros(num_vertices)
+    area_distortion = np.zeros(num_vertices)
+    vertex_count = np.zeros(num_vertices)
 
     for face_idx, face in enumerate(F):
         angle_dist = metrics['angle_distortion'][face_idx]
@@ -61,37 +66,156 @@ def add_distortion_heatmaps(ps_mesh, V, F, UV, method_name):
 
         if not np.isnan(angle_dist):
             for v_idx in face:
-                angle_distortion_vertices[v_idx] += angle_dist
-                area_distortion_vertices[v_idx] += area_dist
-                vertex_face_count[v_idx] += 1
+                angle_distortion[v_idx] += angle_dist
+                area_distortion[v_idx] += area_dist
+                vertex_count[v_idx] += 1
 
     # Average
-    mask = vertex_face_count > 0
-    angle_distortion_vertices[mask] /= vertex_face_count[mask]
-    area_distortion_vertices[mask] /= vertex_face_count[mask]
+    mask = vertex_count > 0
+    angle_distortion[mask] /= vertex_count[mask]
+    area_distortion[mask] /= vertex_count[mask]
 
-    # Add as scalar quantities (will show as heatmaps)
-    ps_mesh.add_scalar_quantity(
-        f"{method_name}: Angle Distortion",
-        angle_distortion_vertices,
+    return angle_distortion, area_distortion
+
+
+def update_display():
+    """Update the displayed meshes based on current state."""
+    # Remove old meshes
+    if state.current_mesh_left is not None:
+        ps.remove_surface_mesh("Mesh (Textured)")
+    if state.current_mesh_right is not None:
+        ps.remove_surface_mesh("Mesh (Heatmap)")
+
+    # Get current mesh data
+    # Map display name to storage key
+    mesh_name = state.mesh_names[state.current_mesh]
+    mesh_key_map = {
+        "UV Sphere": "sphere",
+        "Hemisphere": "hemisphere",
+        "Disk": "disk",
+        "Spot": "spot",
+        "Bunny": "bunny",
+        "Armadillo": "armadillo"
+    }
+    mesh_key = mesh_key_map.get(mesh_name, mesh_name.lower())
+
+    if mesh_key not in state.meshes:
+        print(f"Error: mesh '{mesh_key}' not loaded (from display name '{mesh_name}')")
+        return
+
+    mesh_data = state.meshes[mesh_key]
+
+    # Determine available methods for this mesh
+    if state.current_mesh == 0:  # Sphere
+        methods = state.sphere_methods
+    else:  # All others use Tutte
+        methods = state.tutte_methods
+
+    # Ensure method index is valid
+    if state.current_method >= len(methods):
+        state.current_method = 0
+
+    method_name = methods[state.current_method]
+    V = mesh_data['V']
+    F = mesh_data['F']
+    UV = mesh_data['uvs'][method_name]
+    metrics = mesh_data['metrics'][method_name]
+
+    # Get distortion values
+    angle_dist, area_dist = compute_vertex_distortion(metrics, F, V.shape[0])
+
+    # Choose which distortion to show
+    if state.distortion_type == 0:
+        distortion_values = angle_dist
+        # Use percentile for better visualization (exclude extreme outliers)
+        max_val = np.nanpercentile(angle_dist, 95)  # 95th percentile
+        min_val = 1.0
+        dist_name = "Angle"
+    else:
+        distortion_values = area_dist
+        # Use percentile for better visualization
+        max_val = np.nanpercentile(area_dist, 95)  # 95th percentile
+        min_val = 0.0
+        dist_name = "Area"
+
+    # Clamp distortion values to the range for better visualization
+    distortion_values = np.clip(distortion_values, min_val, max_val)
+
+    # Left mesh: with UV parameterization (checkerboard)
+    V_left = V.copy()
+    V_left[:, 0] -= 1.5  # Translate left
+
+    state.current_mesh_left = ps.register_surface_mesh("Mesh (Textured)", V_left, F, smooth_shade=True)
+    state.current_mesh_left.add_parameterization_quantity("UV", UV, defined_on='vertices', enabled=True)
+
+    # Right mesh: with distortion heatmap
+    V_right = V.copy()
+    V_right[:, 0] += 1.5  # Translate right
+
+    state.current_mesh_right = ps.register_surface_mesh("Mesh (Heatmap)", V_right, F, smooth_shade=True)
+    state.current_mesh_right.add_scalar_quantity(
+        f"{dist_name} Distortion",
+        distortion_values,
         defined_on='vertices',
-        enabled=False,
+        enabled=True,
         cmap='turbo',
-        vminmax=(1.0, np.nanmax(metrics['angle_distortion']))
+        vminmax=(min_val, max_val)
     )
 
-    ps_mesh.add_scalar_quantity(
-        f"{method_name}: Area Distortion",
-        area_distortion_vertices,
-        defined_on='vertices',
-        enabled=False,
-        cmap='turbo',
-        vminmax=(0.0, np.nanmax(metrics['area_distortion']))
-    )
+    # Update info display
+    print(f"\nDisplaying: {state.mesh_names[state.current_mesh]} - {method_name}")
+    print(f"  Distortion type: {dist_name}")
+    print(f"  Mean {dist_name.lower()}: {metrics[f'mean_{dist_name.lower()}_distortion']:.3f}")
+    print(f"  Max {dist_name.lower()}: {metrics[f'max_{dist_name.lower()}_distortion']:.3f}")
+    print(f"  Fold-overs: {metrics['num_fold_overs']}")
 
-    print(f"    Angle distortion: mean={metrics['mean_angle_distortion']:.3f}, max={metrics['max_angle_distortion']:.3f}")
-    print(f"    Area distortion: mean={metrics['mean_area_distortion']:.3f}, max={metrics['max_area_distortion']:.3f}")
-    print(f"    Fold-overs: {metrics['num_fold_overs']}")
+
+def ui_callback():
+    """ImGui callback for custom UI controls."""
+    psim.TextUnformatted("=== Mesh Selection ===")
+
+    # Mesh selector
+    changed, new_mesh = psim.Combo("Mesh", state.current_mesh, state.mesh_names)
+    if changed:
+        state.current_mesh = new_mesh
+        state.current_method = 0  # Reset method when changing mesh
+        update_display()
+
+    psim.Separator()
+    psim.TextUnformatted("=== Parameterization Method ===")
+
+    # Method selector (changes based on mesh)
+    if state.current_mesh == 0:  # Sphere
+        methods = state.sphere_methods
+    else:  # Hemisphere or Disk
+        methods = state.tutte_methods
+
+    changed, new_method = psim.Combo("Method", state.current_method, methods)
+    if changed:
+        state.current_method = new_method
+        update_display()
+
+    psim.Separator()
+    psim.TextUnformatted("=== Distortion Type ===")
+
+    # Distortion type selector
+    changed, new_dist = psim.RadioButton("Angle Distortion", state.distortion_type, 0)
+    if changed:
+        state.distortion_type = 0
+        update_display()
+
+    changed, new_dist = psim.RadioButton("Area Distortion", state.distortion_type, 1)
+    if changed:
+        state.distortion_type = 1
+        update_display()
+
+    psim.Separator()
+    psim.TextUnformatted("=== Info ===")
+    psim.TextUnformatted("Left: UV parameterization (checkerboard)")
+    psim.TextUnformatted("Right: Distortion heatmap")
+    psim.TextUnformatted("")
+    psim.TextUnformatted("Blue = low distortion")
+    psim.TextUnformatted("Red = high distortion")
 
 
 def main():
@@ -100,165 +224,186 @@ def main():
     ps.init()
     ps.set_ground_plane_mode("none")
     ps.set_up_dir("z_up")
+    ps.set_user_callback(ui_callback)
 
-    # Set better initial camera view - zoom out to see all three meshes
+    # Set better initial camera view
     ps.reset_camera_to_home_view()
-    ps.look_at((0.0, -8.0, 3.0), (0.0, 0.0, 0.0))
+    ps.look_at((0.0, -5.0, 2.0), (0.0, 0.0, 0.0))
 
-    # Generate and register the UV sphere
-    print("Generating UV sphere...")
+    print("\n" + "="*70)
+    print("LOADING MESHES AND COMPUTING PARAMETERIZATIONS")
+    print("="*70)
+
+    # ========== SPHERE ==========
+    print("\n1. UV Sphere...")
     V_sphere, F_sphere = uv_sphere(n_lat=40, n_lon=80, radius=1.0)
+    print(f"   Generated: {V_sphere.shape[0]} vertices, {F_sphere.shape[0]} faces")
 
-    ps_mesh_sphere = ps.register_surface_mesh("UV Sphere", V_sphere, F_sphere,
-                                               smooth_shade=True)
-
-    # Compute and register sphere parameterizations
-    print("Computing sphere parameterizations...")
+    print("   Computing sphere parameterizations...")
     uv_equirect = equirectangular(V_sphere)
     uv_mercator = mercator(V_sphere)
     uv_stereo = stereographic(V_sphere)
 
-    # Register sphere parameterizations
-    ps_mesh_sphere.add_parameterization_quantity("Equirectangular", uv_equirect,
-                                                  defined_on='vertices', enabled=True)
-    ps_mesh_sphere.add_parameterization_quantity("Mercator", uv_mercator,
-                                                  defined_on='vertices', enabled=False)
-    ps_mesh_sphere.add_parameterization_quantity("Stereographic", uv_stereo,
-                                                  defined_on='vertices', enabled=False)
+    print("   Computing distortion metrics...")
+    metrics_equirect = compute_distortion_metrics(V_sphere, F_sphere, uv_equirect)
+    metrics_mercator = compute_distortion_metrics(V_sphere, F_sphere, uv_mercator)
+    metrics_stereo = compute_distortion_metrics(V_sphere, F_sphere, uv_stereo)
 
-    # Add distortion heatmaps for sphere parameterizations
-    print("Adding distortion heatmaps for sphere...")
-    add_distortion_heatmaps(ps_mesh_sphere, V_sphere, F_sphere, uv_equirect, "Equirectangular")
-    add_distortion_heatmaps(ps_mesh_sphere, V_sphere, F_sphere, uv_mercator, "Mercator")
-    add_distortion_heatmaps(ps_mesh_sphere, V_sphere, F_sphere, uv_stereo, "Stereographic")
+    state.meshes['sphere'] = {
+        'V': V_sphere,
+        'F': F_sphere,
+        'uvs': {
+            'Equirectangular': uv_equirect,
+            'Mercator': uv_mercator,
+            'Stereographic': uv_stereo,
+        },
+        'metrics': {
+            'Equirectangular': metrics_equirect,
+            'Mercator': metrics_mercator,
+            'Stereographic': metrics_stereo,
+        }
+    }
 
-    # Generate and register a hemisphere with Tutte embedding
-    print("\nGenerating hemisphere for Tutte embedding...")
+    # ========== HEMISPHERE ==========
+    print("\n2. Hemisphere...")
     V_hemi, F_hemi = hemisphere(n_lat=20, n_lon=40, radius=1.0)
+    print(f"   Generated: {V_hemi.shape[0]} vertices, {F_hemi.shape[0]} faces")
 
-    # Translate hemisphere to the side
-    V_hemi_display = V_hemi.copy()
-    V_hemi_display[:, 0] -= 2.5
+    print("   Computing Tutte embeddings...")
+    uv_tutte_uniform = tutte_embedding(V_hemi, F_hemi, weight_type='uniform')
+    uv_tutte_meanvalue = tutte_embedding(V_hemi, F_hemi, weight_type='mean_value')
 
-    ps_mesh_hemi = ps.register_surface_mesh("Hemisphere", V_hemi_display, F_hemi,
-                                             smooth_shade=True)
+    print("   Computing distortion metrics...")
+    metrics_uniform = compute_distortion_metrics(V_hemi, F_hemi, uv_tutte_uniform)
+    metrics_meanvalue = compute_distortion_metrics(V_hemi, F_hemi, uv_tutte_meanvalue)
 
-    # Compute Tutte embeddings
-    print("Computing Tutte embeddings...")
-    try:
-        uv_tutte_uniform = tutte_embedding(V_hemi, F_hemi, weight_type='uniform')
-        uv_tutte_meanvalue = tutte_embedding(V_hemi, F_hemi, weight_type='mean_value')
+    state.meshes['hemisphere'] = {
+        'V': V_hemi,
+        'F': F_hemi,
+        'uvs': {
+            'Tutte Uniform': uv_tutte_uniform,
+            'Tutte Mean-Value': uv_tutte_meanvalue,
+        },
+        'metrics': {
+            'Tutte Uniform': metrics_uniform,
+            'Tutte Mean-Value': metrics_meanvalue,
+        }
+    }
 
-        ps_mesh_hemi.add_parameterization_quantity("Tutte (Uniform)", uv_tutte_uniform,
-                                                    defined_on='vertices', enabled=True)
-        ps_mesh_hemi.add_parameterization_quantity("Tutte (Mean-Value)", uv_tutte_meanvalue,
-                                                    defined_on='vertices', enabled=False)
-
-        # Add distortion heatmaps for hemisphere
-        print("Adding distortion heatmaps for hemisphere...")
-        add_distortion_heatmaps(ps_mesh_hemi, V_hemi, F_hemi, uv_tutte_uniform, "Tutte Uniform")
-        add_distortion_heatmaps(ps_mesh_hemi, V_hemi, F_hemi, uv_tutte_meanvalue, "Tutte Mean-Value")
-
-        print("Tutte embeddings added successfully!")
-    except Exception as e:
-        print(f"Error computing Tutte embedding: {e}")
-
-    uv_hemi_lscm = lscm_embedding(V_hemi, F_hemi)
-    ps_mesh_hemi.add_parameterization_quantity("LSCM", uv_hemi_lscm,
-                                              defined_on='vertices', enabled=False)
-    add_distortion_heatmaps(ps_mesh_hemi, V_hemi, F_hemi, uv_hemi_lscm, "LSCM")
-
-    # Generate and register a planar disk with Tutte embedding
-    print("\nGenerating planar disk for Tutte embedding...")
+    # ========== DISK ==========
+    print("\n3. Planar Disk...")
     V_disk, F_disk = disk(n_radial=15, n_angular=30, radius=1.0)
+    print(f"   Generated: {V_disk.shape[0]} vertices, {F_disk.shape[0]} faces")
 
-    # Translate disk to the other side
-    V_disk_display = V_disk.copy()
-    V_disk_display[:, 0] += 2.5
+    print("   Computing Tutte embeddings...")
+    uv_disk_uniform = tutte_embedding(V_disk, F_disk, weight_type='uniform')
+    uv_disk_meanvalue = tutte_embedding(V_disk, F_disk, weight_type='mean_value')
 
-    ps_mesh_disk = ps.register_surface_mesh("Disk", V_disk_display, F_disk,
-                                             smooth_shade=True)
+    print("   Computing distortion metrics...")
+    metrics_disk_uniform = compute_distortion_metrics(V_disk, F_disk, uv_disk_uniform)
+    metrics_disk_meanvalue = compute_distortion_metrics(V_disk, F_disk, uv_disk_meanvalue)
 
-    # Compute Tutte embeddings for disk
-    print("Computing Tutte embeddings for disk...")
-    try:
-        uv_disk_uniform = tutte_embedding(V_disk, F_disk, weight_type='uniform')
-        uv_disk_meanvalue = tutte_embedding(V_disk, F_disk, weight_type='mean_value')
+    state.meshes['disk'] = {
+        'V': V_disk,
+        'F': F_disk,
+        'uvs': {
+            'Tutte Uniform': uv_disk_uniform,
+            'Tutte Mean-Value': uv_disk_meanvalue,
+        },
+        'metrics': {
+            'Tutte Uniform': metrics_disk_uniform,
+            'Tutte Mean-Value': metrics_disk_meanvalue,
+        }
+    }
 
-        ps_mesh_disk.add_parameterization_quantity("Tutte (Uniform)", uv_disk_uniform,
-                                                    defined_on='vertices', enabled=True)
-        ps_mesh_disk.add_parameterization_quantity("Tutte (Mean-Value)", uv_disk_meanvalue,
-                                                    defined_on='vertices', enabled=False)
+    # ========== LOAD 3D MESHES ==========
+    if HAS_TRIMESH:
+        meshes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "meshes")
+        mesh_files = {
+            'spot': 'spot.obj',
+            'bunny': 'bunny.obj',
+            'armadillo': 'armadillo.obj'
+        }
 
-        # Add distortion heatmaps for disk
-        print("Adding distortion heatmaps for disk...")
-        add_distortion_heatmaps(ps_mesh_disk, V_disk, F_disk, uv_disk_uniform, "Tutte Uniform")
-        add_distortion_heatmaps(ps_mesh_disk, V_disk, F_disk, uv_disk_meanvalue, "Tutte Mean-Value")
+        for mesh_name, filename in mesh_files.items():
+            mesh_path = os.path.join(meshes_dir, filename)
+            if not os.path.exists(mesh_path):
+                print(f"\nSkipping {mesh_name}: {filename} not found")
+                continue
 
-        print("Disk Tutte embeddings added successfully!")
-    except Exception as e:
-        print(f"Error computing Tutte embedding for disk: {e}")
-
-    uv_disk_lscm = lscm_embedding(V_disk, F_disk)
-    ps_mesh_disk.add_parameterization_quantity("LSCM", uv_disk_lscm,
-                                              defined_on='vertices', enabled=False)
-    add_distortion_heatmaps(ps_mesh_disk, V_disk, F_disk, uv_disk_lscm, "LSCM")
-
-    # Try to load a mesh from the meshes/ directory
-    meshes_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "meshes")
-    obj_files = []
-    if os.path.exists(meshes_dir):
-        obj_files = [f for f in os.listdir(meshes_dir) if f.endswith('.obj')]
-
-    if obj_files and HAS_TRIMESH:
-        obj_path = os.path.join(meshes_dir, obj_files[0])
-        print(f"Loading mesh from {obj_path}...")
-        try:
-            mesh = trimesh.load(obj_path)
-            if hasattr(mesh, 'vertices') and hasattr(mesh, 'faces'):
-                # Translate mesh to the side so it doesn't overlap the sphere
+            print(f"\n{len(state.meshes)+1}. Loading {mesh_name.capitalize()}...")
+            try:
+                mesh = trimesh.load(mesh_path)
                 V_loaded = np.array(mesh.vertices, dtype=np.float64)
                 F_loaded = np.array(mesh.faces, dtype=np.int64)
 
-                # Center and scale the loaded mesh
+                # Center and scale
                 center = V_loaded.mean(axis=0)
                 V_loaded -= center
                 scale = np.max(np.linalg.norm(V_loaded, axis=1))
                 if scale > 0:
                     V_loaded /= scale
 
-                # Translate 3 units in x direction
-                V_loaded[:, 0] += 3.0
+                print(f"   Loaded: {V_loaded.shape[0]} vertices, {F_loaded.shape[0]} faces")
 
-                ps.register_surface_mesh(f"Loaded: {obj_files[0]}", V_loaded, F_loaded,
-                                          smooth_shade=True)
-                print(f"Loaded mesh with {len(V_loaded)} vertices and {len(F_loaded)} faces")
-        except Exception as e:
-            print(f"Error loading mesh: {e}")
-    elif not obj_files:
-        print(f"\nNo .obj files found in {meshes_dir}/")
-        print("Place a .obj file there to visualize it alongside the sphere.")
-    elif not HAS_TRIMESH:
-        print("trimesh not available for loading meshes")
+                # Check if mesh has boundary or needs cutting
+                boundary, _ = find_boundary_vertices(F_loaded, V_loaded.shape[0])
+
+                if len(boundary) == 0:
+                    # Closed mesh - need to cut it
+                    print("   Mesh is closed, cutting to disk topology...")
+                    V_loaded, F_loaded, boundary = cut_mesh_to_disk(V_loaded, F_loaded)
+                    print(f"   After cutting: {V_loaded.shape[0]} vertices, {F_loaded.shape[0]} faces")
+                else:
+                    print(f"   Mesh has boundary: {len(boundary)} vertices")
+
+                # Apply Tutte embedding
+                print("   Computing Tutte embeddings...")
+                uv_uniform = tutte_embedding(V_loaded, F_loaded, weight_type='uniform')
+                uv_meanvalue = tutte_embedding(V_loaded, F_loaded, weight_type='mean_value')
+
+                print("   Computing distortion metrics...")
+                metrics_uniform = compute_distortion_metrics(V_loaded, F_loaded, uv_uniform)
+                metrics_meanvalue = compute_distortion_metrics(V_loaded, F_loaded, uv_meanvalue)
+
+                state.meshes[mesh_name] = {
+                    'V': V_loaded,
+                    'F': F_loaded,
+                    'uvs': {
+                        'Tutte Uniform': uv_uniform,
+                        'Tutte Mean-Value': uv_meanvalue,
+                    },
+                    'metrics': {
+                        'Tutte Uniform': metrics_uniform,
+                        'Tutte Mean-Value': metrics_meanvalue,
+                    }
+                }
+
+                print(f"   ✓ {mesh_name.capitalize()} loaded successfully")
+
+            except Exception as e:
+                print(f"   ✗ Error loading {mesh_name}: {e}")
+                import traceback
+                traceback.print_exc()
+    else:
+        print("\n⚠️  trimesh not available - 3D meshes will not be loaded")
 
     print("\n" + "="*70)
     print("VIEWER READY!")
     print("="*70)
-    print("\nDisplaying:")
-    print("  - UV Sphere (center): Analytic sphere projections")
-    print("  - Hemisphere (left): Tutte and LSCM on a curved surface")
-    print("  - Disk (right): Tutte and LSCM on a planar surface")
-    print("\nVisualization Options (in right panel):")
-    print("  - Parameterization: Shows checkerboard UV pattern")
-    print("  - Angle Distortion: Heatmap (blue=low, red=high distortion)")
-    print("  - Area Distortion: Heatmap (blue=low, red=high distortion)")
-    print("\nControls:")
-    print("  - Click mesh names to select them")
-    print("  - Toggle between parameterizations and heatmaps")
-    print("  - Scroll to zoom, left-drag to rotate, right-drag to pan")
-    print("  - Compare distortion between different methods")
-    print("  - Close the window to exit")
+    print(f"\nLoaded {len(state.meshes)} meshes:")
+    for mesh_name in state.meshes.keys():
+        print(f"  - {mesh_name.capitalize()}")
+    print("\nUse the UI panel on the right to:")
+    print("  - Select mesh from dropdown")
+    print("  - Select parameterization method")
+    print("  - Toggle between angle/area distortion")
+    print("\nLeft mesh: UV checkerboard texture")
+    print("Right mesh: Distortion heatmap")
     print("="*70)
+
+    # Initialize display with first mesh
+    update_display()
 
     # Show the window
     ps.show()
