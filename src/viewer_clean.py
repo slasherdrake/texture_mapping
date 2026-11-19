@@ -39,7 +39,7 @@ except ImportError:
 # Global state for UI
 class ViewerState:
     def __init__(self):
-        self.current_mesh = 0  # Index into mesh_names
+        self.current_mesh = 2  # Index into mesh_names (start with Disk - simpler than Sphere)
         self.current_method = 0  # Index into available methods for current mesh
         self.distortion_type = 0  # 0=angle, 1=area
 
@@ -222,6 +222,10 @@ def main():
     ps.set_ground_plane_mode("none")
     ps.set_up_dir("z_up")
     ps.set_user_callback(ui_callback)
+
+    # Try to request window focus (may help on macOS)
+    ps.set_window_resizable(True)
+    ps.set_give_focus_on_show(True)
 
     # Set better initial camera view
     ps.reset_camera_to_home_view()
@@ -428,10 +432,27 @@ def main():
     print("="*70)
 
     # Initialize display with first mesh
+    print("\nInitializing first mesh display...")
     update_display()
 
-    # Show the window
+    print("\nOpening Polyscope window...")
+    print("=" * 70)
+    print("WINDOW TROUBLESHOOTING:")
+    print("  If you don't see a window appear:")
+    print("  1. Press Cmd+Tab - look for 'Python' or window icon")
+    print("  2. Use Mission Control (3-finger swipe up) to see all windows")
+    print("  3. Check if window is on another desktop/space")
+    print("  4. Click 'Python' in the Dock if you see it")
+    print("  5. Try minimizing all other windows")
+    print("\n  When done viewing: Close the window to exit")
+    print("  If stuck: Press Ctrl+C")
+    print("=" * 70)
+
+    # Show the window (this blocks until window is closed)
+    # To auto-close after N seconds: ps.show(N)
     ps.show()
+
+    print("\nViewer closed. Goodbye!")
 
 
 if __name__ == "__main__":

@@ -1,0 +1,40 @@
+[polyscope] Backend: openGL3_glfw -- Loaded openGL version: 4.1 Metal - 89.4
+Generating UV sphere...
+Computing sphere parameterizations...
+
+Generating hemisphere for Tutte embedding...
+Computing Tutte embeddings...
+Tutte embedding: 411 vertices (351 interior, 60 boundary)
+Solving sparse linear system (351 × 351)...
+Tutte embedding complete.
+Tutte embedding: 411 vertices (351 interior, 60 boundary)
+Solving sparse linear system (351 × 351)...
+Tutte embedding complete.
+Tutte embeddings added successfully!
+
+Generating planar disk for Tutte embedding...
+Computing Tutte embeddings for disk...
+Tutte embedding: 451 vertices (421 interior, 30 boundary)
+Solving sparse linear system (421 × 421)...
+Tutte embedding complete.
+Tutte embedding: 451 vertices (421 interior, 30 boundary)
+Solving sparse linear system (421 × 421)...
+Tutte embedding complete.
+Disk Tutte embeddings added successfully!
+Loading mesh from /Users/tannermuscarella/Desktop/Fall 26/ECE 567/texture_mapping/meshes/armadillo.obj...
+Loaded mesh with 49990 vertices and 99976 faces
+
+======================================================================
+VIEWER READY!
+======================================================================
+
+Displaying:
+  - UV Sphere (center): Analytic sphere projections
+  - Hemisphere (left): Tutte embedding of curved surface
+  - Disk (right): Tutte embedding of planar surface
+
+Controls:
+  - Toggle between parameterizations in the UI
+  - Compare distortion between uniform and mean-value weights
+  - Close the window to exit
+======================================================================
