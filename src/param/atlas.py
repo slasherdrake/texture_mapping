@@ -311,6 +311,10 @@ def generate_texture_atlas(V, F, max_area_distortion=2.0, max_subdivisions=2,
     if len(connected_charts) > len(charts):
         print(f"  Split {len(charts)} charts into {len(connected_charts)} connected components")
 
+    # Reassign unique IDs to avoid collisions after splitting
+    for idx, chart in enumerate(connected_charts):
+        chart['id'] = idx
+
     charts = connected_charts
 
     # Step 2: Parameterize each chart

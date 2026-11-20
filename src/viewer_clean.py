@@ -26,6 +26,7 @@ from src.param.tutte import tutte_embedding, find_boundary_vertices
 from src.param.lscm import lscm_embedding
 from src.param.cut import cut_mesh_to_disk
 from src.param.mesh_cleanup import clean_mesh_for_lscm
+from src.param.atlas import generate_texture_atlas, extract_chart_mesh
 from src.distortion import compute_distortion_metrics
 
 try:
@@ -80,6 +81,136 @@ def compute_vertex_distortion(metrics, F, num_vertices):
     area_distortion[mask] /= vertex_count[mask]
 
     return angle_distortion, area_distortion
+
+
+def pack_atlas_uvs(V, F, atlas):
+    """
+    Pack all chart UVs into a single UV layout using grid packing.
+
+    Parameters
+    ----------
+    V : (N, 3) array
+        Original mesh vertices
+    F : (M, 3) array
+        Original mesh faces
+    atlas : dict
+        Atlas result from generate_texture_atlas
+
+    Returns
+    -------
+    uv_packed : (N, 2) array
+        UV coordinates for all vertices
+    combined_metrics : dict
+        Combined distortion metrics across all charts
+    """
+    n_verts = V.shape[0]
+    uv_packed = np.zeros((n_verts, 2))
+    vertex_assigned = np.zeros(n_verts, dtype=bool)
+
+    # Accumulate distortion values for all faces
+    n_faces = F.shape[0]
+    face_angle_dist = np.full(n_faces, np.nan)
+    face_area_dist = np.full(n_faces, np.nan)
+
+    successful_charts = atlas['charts']
+
+    if len(successful_charts) == 0:
+        print("Warning: No successful charts to pack")
+        return uv_packed, {
+            'angle_distortion': face_angle_dist,
+            'area_distortion': face_area_dist,
+            'num_fold_overs': 0,
+            'mean_angle_distortion': np.nan,
+            'max_angle_distortion': np.nan,
+            'mean_area_distortion': np.nan,
+            'max_area_distortion': np.nan
+        }
+
+    # Determine grid size (aim for roughly square packing)
+    n_charts = len(successful_charts)
+    grid_size = int(np.ceil(np.sqrt(n_charts)))
+
+    # Scale each chart to show ONE large checkerboard square
+    # Polyscope's checkerboard has ~8 squares per 1.0 UV unit
+    # So 0.125 UV units = 1 square, we use slightly less for visibility
+    chart_uv_size = 0.08  # Very small UV range = one large checkerboard square per chart
+    spacing = 0.02  # Small gap between charts
+    cell_size = chart_uv_size + spacing
+
+    print(f"\nPacking {n_charts} charts into {grid_size}x{grid_size} grid...")
+    print(f"  Each chart scaled to {chart_uv_size} UV units for large checkerboard visibility")
+
+    # Pack each chart into a grid cell
+    for i, chart in enumerate(successful_charts):
+        chart_id = chart['id']
+
+        # Get chart UVs
+        if chart_id not in atlas['uv_coords']:
+            continue
+
+        uv_data = atlas['uv_coords'][chart_id]
+        uv_chart = uv_data['uv']  # Extract UV array from dict
+        vertex_map = uv_data['vertex_map']  # Get vertex mapping from atlas (matches UV)
+        F_chart = uv_data['F_chart']  # Get chart faces
+        metrics_chart = atlas['metrics'][chart_id]
+
+        # Normalize chart UVs to [0, 1]
+        uv_min = uv_chart.min(axis=0)
+        uv_max = uv_chart.max(axis=0)
+        uv_range = uv_max - uv_min
+
+        # Avoid division by zero
+        uv_range[uv_range < 1e-10] = 1.0
+
+        uv_normalized = (uv_chart - uv_min) / uv_range
+
+        # Scale to chart_uv_size to make checkerboard visible (not tiny cell_size)
+        uv_scaled = uv_normalized * chart_uv_size
+
+        # Offset to grid position with spacing
+        grid_row = i // grid_size
+        grid_col = i % grid_size
+        uv_offset = uv_scaled + np.array([grid_col * cell_size, grid_row * cell_size])
+
+        # Assign to original vertices using the stored vertex_map
+        # vertex_map is a list where vertex_map[local_idx] = original_idx
+        for local_idx in range(len(vertex_map)):
+            orig_idx = vertex_map[local_idx]
+            # Always assign (allow overwrite for shared vertices - last chart wins)
+            uv_packed[orig_idx] = uv_offset[local_idx]
+            vertex_assigned[orig_idx] = True
+
+        # Copy distortion values to corresponding faces
+        # F_chart contains the local face indices (reindexed to 0..n-1)
+        # chart['faces'] contains the original face indices from the full mesh
+        # We need to map: for each face in F_chart (local index), find its original index
+        for local_face_idx in range(len(F_chart)):
+            # Find the original face index from chart['faces']
+            if local_face_idx < len(chart['faces']):
+                orig_face_idx = chart['faces'][local_face_idx]
+                if not np.isnan(metrics_chart['angle_distortion'][local_face_idx]):
+                    face_angle_dist[orig_face_idx] = metrics_chart['angle_distortion'][local_face_idx]
+                    face_area_dist[orig_face_idx] = metrics_chart['area_distortion'][local_face_idx]
+
+    # Compute combined metrics
+    valid_angle = face_angle_dist[np.isfinite(face_angle_dist)]
+    valid_area = face_area_dist[np.isfinite(face_area_dist)]
+
+    combined_metrics = {
+        'angle_distortion': face_angle_dist,
+        'area_distortion': face_area_dist,
+        'num_fold_overs': sum(atlas['metrics'][c['id']]['num_fold_overs']
+                              for c in successful_charts if c['id'] in atlas['metrics']),
+        'mean_angle_distortion': np.mean(valid_angle) if len(valid_angle) > 0 else np.nan,
+        'max_angle_distortion': np.max(valid_angle) if len(valid_angle) > 0 else np.nan,
+        'mean_area_distortion': np.mean(valid_area) if len(valid_area) > 0 else np.nan,
+        'max_area_distortion': np.max(valid_area) if len(valid_area) > 0 else np.nan
+    }
+
+    coverage = np.sum(vertex_assigned) / n_verts * 100
+    print(f"Packed {n_charts} charts, vertex coverage: {coverage:.1f}%")
+
+    return uv_packed, combined_metrics
 
 
 def update_display():
@@ -380,6 +511,31 @@ def main():
                     }
                 }
 
+                # Try LSCM Atlas generation for complex meshes
+                print(f"   Computing LSCM Atlas for {mesh_name}...")
+                try:
+                    atlas = generate_texture_atlas(
+                        V_loaded, F_loaded,
+                        percentile=95,
+                        max_string_length=5,
+                        min_feature_length=15
+                    )
+
+                    if len(atlas['charts']) > 0:
+                        # Pack all charts into single UV layout
+                        uv_atlas, metrics_atlas = pack_atlas_uvs(V_loaded, F_loaded, atlas)
+
+                        state.meshes[mesh_name]['uvs']['LSCM Atlas'] = uv_atlas
+                        state.meshes[mesh_name]['metrics']['LSCM Atlas'] = metrics_atlas
+
+                        print(f"   ✓ LSCM Atlas: {len(atlas['charts'])} charts, "
+                              f"{len(atlas['failed_charts'])} failed")
+                    else:
+                        print(f"   ✗ LSCM Atlas: No successful charts")
+
+                except Exception as e:
+                    print(f"   ✗ LSCM Atlas failed: {e}")
+
                 print(f"   ✓ {mesh_name.capitalize()} loaded successfully")
 
             except Exception as e:
@@ -389,12 +545,14 @@ def main():
     else:
         print("\n⚠️  trimesh not available - 3D meshes will not be loaded")
 
-    # LSCM validates disk topology before solving. Try cleaning meshes first.
+    # LSCM (single chart) for simple meshes with disk topology
+    # Complex meshes already have LSCM Atlas from above
+    simple_meshes = ['hemisphere', 'disk']
     for name, data in state.meshes.items():
-        if name == 'sphere':
+        if name not in simple_meshes:
             continue
         try:
-            print(f"\nComputing LSCM for {name}...")
+            print(f"\nComputing single-chart LSCM for {name}...")
             # Try cleaning the mesh first
             V_clean, F_clean = clean_mesh_for_lscm(data['V'], data['F'])
             uv = lscm_embedding(V_clean, F_clean)
