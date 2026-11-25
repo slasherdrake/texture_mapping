@@ -24,6 +24,7 @@ from src.shapes import uv_sphere, disk, hemisphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
 from src.param.tutte import tutte_embedding, find_boundary_vertices
 from src.param.lscm import lscm_embedding
+from src.param.arap import arap_embedding
 from src.param.cut import cut_mesh_to_disk
 from src.param.mesh_cleanup import clean_mesh_for_lscm
 from src.param.atlas import generate_texture_atlas, extract_chart_mesh
@@ -405,9 +406,13 @@ def main():
     uv_tutte_uniform = tutte_embedding(V_hemi, F_hemi, weight_type='uniform')
     uv_tutte_meanvalue = tutte_embedding(V_hemi, F_hemi, weight_type='mean_value')
 
+    print("   Computing ARAP embedding...")
+    uv_arap = arap_embedding(V_hemi, F_hemi, max_iterations=10)
+
     print("   Computing distortion metrics...")
     metrics_uniform = compute_distortion_metrics(V_hemi, F_hemi, uv_tutte_uniform)
     metrics_meanvalue = compute_distortion_metrics(V_hemi, F_hemi, uv_tutte_meanvalue)
+    metrics_arap = compute_distortion_metrics(V_hemi, F_hemi, uv_arap)
 
     state.meshes['hemisphere'] = {
         'V': V_hemi,
@@ -415,10 +420,12 @@ def main():
         'uvs': {
             'Tutte Uniform': uv_tutte_uniform,
             'Tutte Mean-Value': uv_tutte_meanvalue,
+            'ARAP': uv_arap,
         },
         'metrics': {
             'Tutte Uniform': metrics_uniform,
             'Tutte Mean-Value': metrics_meanvalue,
+            'ARAP': metrics_arap,
         }
     }
 
@@ -431,9 +438,13 @@ def main():
     uv_disk_uniform = tutte_embedding(V_disk, F_disk, weight_type='uniform')
     uv_disk_meanvalue = tutte_embedding(V_disk, F_disk, weight_type='mean_value')
 
+    print("   Computing ARAP embedding...")
+    uv_disk_arap = arap_embedding(V_disk, F_disk, max_iterations=10)
+
     print("   Computing distortion metrics...")
     metrics_disk_uniform = compute_distortion_metrics(V_disk, F_disk, uv_disk_uniform)
     metrics_disk_meanvalue = compute_distortion_metrics(V_disk, F_disk, uv_disk_meanvalue)
+    metrics_disk_arap = compute_distortion_metrics(V_disk, F_disk, uv_disk_arap)
 
     state.meshes['disk'] = {
         'V': V_disk,
@@ -441,10 +452,12 @@ def main():
         'uvs': {
             'Tutte Uniform': uv_disk_uniform,
             'Tutte Mean-Value': uv_disk_meanvalue,
+            'ARAP': uv_disk_arap,
         },
         'metrics': {
             'Tutte Uniform': metrics_disk_uniform,
             'Tutte Mean-Value': metrics_disk_meanvalue,
+            'ARAP': metrics_disk_arap,
         }
     }
 
@@ -494,21 +507,44 @@ def main():
                 uv_uniform = tutte_embedding(V_loaded, F_loaded, weight_type='uniform')
                 uv_meanvalue = tutte_embedding(V_loaded, F_loaded, weight_type='mean_value')
 
+                # Apply ARAP embedding
+                # ARAP now works on meshes with large boundaries using LSQR solver
+                print("   Computing ARAP embedding...")
+                try:
+                    uv_arap = arap_embedding(V_loaded, F_loaded, max_iterations=10)
+                    # Check for NaN/Inf values
+                    if np.isnan(uv_arap).any() or np.isinf(uv_arap).any():
+                        print("   ⚠ ARAP produced invalid UVs (NaN/Inf), skipping")
+                        uv_arap = None
+                except Exception as e:
+                    print(f"   ⚠ ARAP failed: {e}")
+                    uv_arap = None
+
                 print("   Computing distortion metrics...")
                 metrics_uniform = compute_distortion_metrics(V_loaded, F_loaded, uv_uniform)
                 metrics_meanvalue = compute_distortion_metrics(V_loaded, F_loaded, uv_meanvalue)
 
+                # Build uvs and metrics dicts
+                uvs_dict = {
+                    'Tutte Uniform': uv_uniform,
+                    'Tutte Mean-Value': uv_meanvalue,
+                }
+                metrics_dict = {
+                    'Tutte Uniform': metrics_uniform,
+                    'Tutte Mean-Value': metrics_meanvalue,
+                }
+
+                # Only add ARAP if it succeeded
+                if uv_arap is not None:
+                    metrics_arap = compute_distortion_metrics(V_loaded, F_loaded, uv_arap)
+                    uvs_dict['ARAP'] = uv_arap
+                    metrics_dict['ARAP'] = metrics_arap
+
                 state.meshes[mesh_name] = {
                     'V': V_loaded,
                     'F': F_loaded,
-                    'uvs': {
-                        'Tutte Uniform': uv_uniform,
-                        'Tutte Mean-Value': uv_meanvalue,
-                    },
-                    'metrics': {
-                        'Tutte Uniform': metrics_uniform,
-                        'Tutte Mean-Value': metrics_meanvalue,
-                    }
+                    'uvs': uvs_dict,
+                    'metrics': metrics_dict
                 }
 
                 # Try LSCM Atlas generation for complex meshes
