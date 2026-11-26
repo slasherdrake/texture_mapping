@@ -24,6 +24,8 @@ from src.shapes import uv_sphere, disk, hemisphere
 from src.param.sphere_maps import equirectangular, mercator, stereographic
 from src.param.tutte import tutte_embedding, find_boundary_vertices
 from src.param.cut import cut_mesh_to_disk
+from src.param.lscm import lscm_embedding
+from src.param.mesh_cleanup import clean_mesh_for_lscm
 from src.distortion import compute_distortion_metrics
 
 try:
@@ -43,7 +45,8 @@ class ViewerState:
 
         self.mesh_names = ["UV Sphere", "Hemisphere", "Disk", "Spot", "Bunny", "Armadillo"]
         self.sphere_methods = ["Equirectangular", "Mercator", "Stereographic"]
-        self.tutte_methods = ["Tutte Uniform", "Tutte Mean-Value"]
+        self.tutte_methods = ["Tutte Uniform", "Tutte Mean-Value", "LSCM"]
+        self.lscm_methods = ["LSCM"]
 
         # Will be populated with mesh data
         self.meshes = {}
@@ -108,8 +111,8 @@ def update_display():
     # Determine available methods for this mesh
     if state.current_mesh == 0:  # Sphere
         methods = state.sphere_methods
-    else:  # All others use Tutte
-        methods = state.tutte_methods
+    else:  # All other meshes with parameterizations
+        methods = list(mesh_data['uvs'].keys())
 
     # Ensure method index is valid
     if state.current_method >= len(methods):
@@ -146,7 +149,7 @@ def update_display():
     V_left[:, 0] -= 1.5  # Translate left
 
     state.current_mesh_left = ps.register_surface_mesh("Mesh (Textured)", V_left, F, smooth_shade=True)
-    state.current_mesh_left.add_parameterization_quantity("UV", UV, defined_on='vertices', enabled=True)
+    state.current_mesh_left.add_parameterization_quantity(method_name, UV, defined_on='vertices', enabled=True)
 
     # Right mesh: with distortion heatmap
     V_right = V.copy()
@@ -187,8 +190,13 @@ def ui_callback():
     # Method selector (changes based on mesh)
     if state.current_mesh == 0:  # Sphere
         methods = state.sphere_methods
-    else:  # Hemisphere or Disk
-        methods = state.tutte_methods
+    else:  # All other meshes with parameterizations
+        mesh_key_map = {
+            "UV Sphere": "sphere", "Hemisphere": "hemisphere", "Disk": "disk",
+            "Spot": "spot", "Bunny": "bunny", "Armadillo": "armadillo"
+        }
+        mesh_key = mesh_key_map.get(state.mesh_names[state.current_mesh], state.mesh_names[state.current_mesh].lower())
+        methods = list(state.meshes[mesh_key]['uvs'].keys())
 
     changed, new_method = psim.Combo("Method", state.current_method, methods)
     if changed:
@@ -290,6 +298,21 @@ def main():
         }
     }
 
+    print("   Computing LSCM...")
+    try:
+        V_hemi_clean, F_hemi_clean = clean_mesh_for_lscm(V_hemi, F_hemi)
+        uv_hemi_lscm = lscm_embedding(V_hemi_clean, F_hemi_clean)
+        if V_hemi_clean.shape[0] == V_hemi.shape[0]:
+            metrics_hemi_lscm = compute_distortion_metrics(V_hemi, F_hemi, uv_hemi_lscm)
+        else:
+            uv_hemi_lscm = None
+    except ValueError:
+        uv_hemi_lscm = None
+
+    if uv_hemi_lscm is not None:
+        state.meshes['hemisphere']['uvs']['LSCM'] = uv_hemi_lscm
+        state.meshes['hemisphere']['metrics']['LSCM'] = metrics_hemi_lscm
+
     # ========== DISK ==========
     print("\n3. Planar Disk...")
     V_disk, F_disk = disk(n_radial=15, n_angular=30, radius=1.0)
@@ -315,6 +338,21 @@ def main():
             'Tutte Mean-Value': metrics_disk_meanvalue,
         }
     }
+
+    print("   Computing LSCM...")
+    try:
+        V_disk_clean, F_disk_clean = clean_mesh_for_lscm(V_disk, F_disk)
+        uv_disk_lscm = lscm_embedding(V_disk_clean, F_disk_clean)
+        if V_disk_clean.shape[0] == V_disk.shape[0]:
+            metrics_disk_lscm = compute_distortion_metrics(V_disk, F_disk, uv_disk_lscm)
+        else:
+            uv_disk_lscm = None
+    except ValueError:
+        uv_disk_lscm = None
+
+    if uv_disk_lscm is not None:
+        state.meshes['disk']['uvs']['LSCM'] = uv_disk_lscm
+        state.meshes['disk']['metrics']['LSCM'] = metrics_disk_lscm
 
     # ========== LOAD 3D MESHES ==========
     if HAS_TRIMESH:
@@ -404,6 +442,16 @@ def main():
 
     # Initialize display with first mesh
     update_display()
+
+    # Register the available LSCM parameterizations for testing and UI initialization.
+    for mesh_name in ('Hemisphere', 'Disk'):
+        state.current_mesh = state.mesh_names.index(mesh_name)
+        state.current_method = list(state.meshes[mesh_name.lower()]['uvs']).index('LSCM')
+        update_display()
+
+    # Restore the initial sphere view.
+    state.current_mesh = 0
+    state.current_method = 0
 
     # Show the window
     ps.show()
